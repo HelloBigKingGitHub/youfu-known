@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from app.api import chat as chat_router
+from app.api import chat_history as chat_history_router
 from app.api import documents as documents_router
 from app.api import health as health_router
 from app.api import knowledge_bases as knowledge_bases_router
@@ -203,6 +204,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(knowledge_bases_router.router)
     app.include_router(documents_router.router)
     app.include_router(chat_router.router)
+    app.include_router(chat_history_router.router)
 
 
 # ---------------------------------------------------------------------------

@@ -89,6 +89,7 @@ class Citation(BaseModel):
     doc_id: str
     doc_filename: str
     chunk_idx: int
+    chunk_id: str = ""  # "{doc_id}::{chunk_idx}", convenience for clients
     score: float
     text: str
 
@@ -106,6 +107,48 @@ class ChatResponse(BaseModel):
 
     answer: str
     citations: List[Citation] = Field(default_factory=list)
+
+
+class ChatTurn(BaseModel):
+    """Persisted chat turn (one Q + A pair) belonging to a KB.
+
+    Mirrors the ``chat_turns`` table. ``citations`` is stored as JSON
+    inside ``citations_json`` so we don't need a separate join table.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    kb_id: str
+    question: str
+    answer: str = ""
+    error: str = ""
+    citations: List[Citation] = Field(default_factory=list)
+    status: str  # "ready" | "failed"
+    created_at: datetime
+    latency_ms: int = 0
+
+
+class ChunkMeta(BaseModel):
+    """Persisted chunk metadata (mirrors the ``chunks`` table).
+
+    The matching Chroma id is ``"{doc_id}::{chunk_idx}"``; we use the
+    same string as the primary key here so lookups by Chroma id are
+    trivial.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str  # "{doc_id}::{chunk_idx}"
+    doc_id: str
+    kb_id: str
+    chunk_idx: int
+    content: str
+    char_count: int
+    token_estimate: int = 0
+    start_offset: int = 0
+    end_offset: int = 0
+    created_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -145,5 +188,7 @@ __all__ = [
     "Citation",
     "ChatRequest",
     "ChatResponse",
+    "ChatTurn",
+    "ChunkMeta",
     "ApiResponse",
 ]

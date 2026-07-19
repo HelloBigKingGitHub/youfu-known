@@ -26,6 +26,7 @@ from fastapi import (
 from app.api import ok
 from app.deps import get_kb_service
 from app.jobs.ingest import kick_ingest
+from app.kb.models import ChunkMeta
 from app.kb.service import (
     DocumentNotFoundError,
     FileTooLargeError,
@@ -70,6 +71,23 @@ def _uploaded_payload(uf) -> dict:
         "doc_id": uf.doc_id,
         "filename": uf.filename,
         "status": uf.status.value if hasattr(uf.status, "value") else uf.status,
+    }
+
+
+def _chunk_payload(c: ChunkMeta) -> dict:
+    return {
+        "id": c.id,
+        "doc_id": c.doc_id,
+        "kb_id": c.kb_id,
+        "chunk_idx": c.chunk_idx,
+        "content": c.content,
+        "char_count": c.char_count,
+        "token_estimate": c.token_estimate,
+        "start_offset": c.start_offset,
+        "end_offset": c.end_offset,
+        "created_at": (
+            c.created_at.isoformat() if c.created_at else None
+        ),
     }
 
 
@@ -234,3 +252,56 @@ async def delete_document(
     if not ok_deleted:
         raise HTTPException(status_code=404, detail=f"document not found: {doc_id}")
     return ok({"deleted": doc_id})
+
+
+@router.get("/{doc_id}/chunks")
+async def list_document_chunks(
+    kb_id: str,
+    doc_id: str,
+    request: Request,
+    limit: int = 100,
+    offset: int = 0,
+    svc: KBService = Depends(get_kb_service),
+) -> dict:
+    """Return chunk metadata for a document, ordered by ``chunk_idx``.
+
+    Debug / re-indexing helper. ``limit`` defaults to 100; ``offset``
+    is a plain integer page offset (not a cursor).
+    """
+    # Validate that the document belongs to ``kb_id`` so callers can't
+    # probe another KB's chunks by guessing doc_ids.
+    try:
+        svc.get_document(kb_id, doc_id)
+    except (DocumentNotFoundError, KBNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    storage = getattr(request.app.state, "storage", None)
+    if storage is None:
+        raise HTTPException(status_code=500, detail="storage not initialised")
+    chunks = storage.list_chunks_for_doc(doc_id, limit=limit, offset=offset)
+    return ok([_chunk_payload(c) for c in chunks])
+
+
+@router.get("/{doc_id}/chunks/{chunk_id}")
+async def get_document_chunk(
+    kb_id: str,
+    doc_id: str,
+    chunk_id: str,
+    request: Request,
+    svc: KBService = Depends(get_kb_service),
+) -> dict:
+    """Return a single chunk row (including its full ``content``)."""
+    try:
+        svc.get_document(kb_id, doc_id)
+    except (DocumentNotFoundError, KBNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    storage = getattr(request.app.state, "storage", None)
+    if storage is None:
+        raise HTTPException(status_code=500, detail="storage not initialised")
+    chunk = storage.get_chunk(chunk_id)
+    if chunk is None or chunk.doc_id != doc_id:
+        raise HTTPException(
+            status_code=404, detail=f"chunk not found: {chunk_id}"
+        )
+    return ok(_chunk_payload(chunk))

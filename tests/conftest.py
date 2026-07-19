@@ -23,9 +23,10 @@ import io
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 import pytest
+import yaml
 from chromadb.config import Settings as ChromaSettings
 
 from app.config import (
@@ -348,6 +349,134 @@ def kb_service(
         embedder=Embedder(fake_embedding_client),
         settings=settings,
     )
+
+
+# ---------------------------------------------------------------------------
+# TestClient harness (shared by tests that need to hit the HTTP layer)
+# ---------------------------------------------------------------------------
+
+
+def _make_settings_for_testclient(project_root: Path, tmp: Path) -> Settings:
+    """Build a Settings instance pointing every storage path at ``tmp``.
+
+    ``project_root`` becomes the project root (used by config resolver
+    helpers), but all actual data dirs are redirected to ``tmp``.
+    """
+    cfg_path = project_root / "config.yaml"
+    with cfg_path.open() as f:
+        cfg = yaml.safe_load(f)
+
+    cfg["storage"]["upload_dir"] = str(tmp / "uploads")
+    cfg["storage"]["chroma_dir"] = str(tmp / "chroma")
+    cfg["storage"]["meta_db"] = str(tmp / "meta.sqlite3")
+    # Inject placeholder API keys so pydantic Settings validate.
+    cfg["chat"]["api_key"] = "test-chat-key"
+    cfg["embedding"]["api_key"] = "test-embed-key"
+    return Settings(project_root=project_root, **cfg)
+
+
+@pytest.fixture()
+def api_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Settings:
+    """Settings object wired up for the TestClient harness.
+
+    Redirects every storage dir at ``tmp_path`` so the app cannot leak
+    real data. Also injects dummy API keys so pydantic Settings accept.
+    """
+    import yaml  # local import keeps top-level deps lean
+
+    project_root = Path(__file__).resolve().parent.parent
+    monkeypatch.setenv("YOUFU_KNOWN_ROOT", str(project_root))
+    # Drop any cached singleton so the env-var change takes effect.
+    import app.config as config_mod
+    config_mod.get_settings.cache_clear()  # type: ignore[attr-defined]
+
+    import importlib
+    importlib.reload(config_mod)
+
+    settings = _make_settings_for_testclient(project_root, tmp_path)
+    import app.deps as deps
+    monkeypatch.setattr(config_mod, "get_settings", lambda: settings)
+    monkeypatch.setattr(deps, "get_settings", lambda: settings)
+    return settings
+
+
+@pytest.fixture()
+def client(api_settings: Settings) -> Iterator[TestClient]:
+    """Spin up the FastAPI app pointed at the temp storage."""
+    from fastapi.testclient import TestClient
+
+    from main import create_app
+
+    app = create_app()
+    with TestClient(app, raise_server_exceptions=False) as c:
+        yield c
+
+
+class _FakeRetriever:
+    """Drop-in replacement for Retriever used by the chat endpoint."""
+
+    def __init__(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from app.rag.retriever import Citation, RagResult
+
+        self.ask = AsyncMock(
+            return_value=RagResult(
+                answer=(
+                    "根据资料, MiniMax Embedding 接口地址为 "
+                    "https://api.MiniMax.chat/v1/embeddings [1]。"
+                ),
+                citations=[
+                    Citation(
+                        n=1,
+                        doc_id="doc-abc",
+                        doc_filename="minimax_docs.md",
+                        chunk_idx=3,
+                        chunk_id="doc-abc::3",
+                        score=0.82,
+                        text=(
+                            "MiniMax Embedding 接口地址为 "
+                            "https://api.MiniMax.chat/v1/embeddings ..."
+                        ),
+                    )
+                ],
+            )
+        )
+
+
+@pytest.fixture()
+def mock_retriever(client: TestClient) -> _FakeRetriever:
+    """Swap the lifespan-built retriever with a mock."""
+    fake = _FakeRetriever()
+    client.app.state.retriever = fake  # type: ignore[attr-defined]
+    return fake
+
+
+@pytest.fixture()
+def mock_embedder(client: TestClient) -> None:
+    """Replace the embedding client with one that returns random vectors.
+
+    The Chroma collection persists in tmp_path, so upserting fake
+    embeddings is fine -- the test only asserts the pipeline reaches
+    READY status, not that retrievals are sensible.
+    """
+    import random
+
+    class _FakeEmbedClient:
+        dim = 1024  # must match real DashScope embedding dim
+        model = "fake-embed"
+
+        async def aembed(self, texts):
+            return [[random.random() for _ in range(self.dim)] for _ in texts]
+
+    fake = _FakeEmbedClient()
+    client.app.state.embed_client = fake  # type: ignore[attr-defined]
+    # KBService holds its own reference to the embedder; swap its inner
+    # client too so ingest_document uses the fake.
+    embedder = client.app.state.embedder  # type: ignore[attr-defined]
+    embedder._client = fake  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------

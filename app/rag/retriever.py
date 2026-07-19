@@ -22,8 +22,9 @@ class Citation:
     doc_id: str
     doc_filename: str
     chunk_idx: int
-    score: float
-    text: str
+    chunk_id: str = ""  # "{doc_id}::{chunk_idx}"
+    score: float = 0.0
+    text: str = ""
 
 
 @dataclass
@@ -95,12 +96,14 @@ class Retriever:
             except (TypeError, ValueError):
                 score = 0.0
             chunk_idx = int(meta.get("chunk_idx", 0) or 0)
+            doc_id = str(meta.get("doc_id", ""))
             citations.append(
                 Citation(
                     n=idx,
-                    doc_id=str(meta.get("doc_id", "")),
+                    doc_id=doc_id,
                     doc_filename=str(meta.get("doc_filename", "")),
                     chunk_idx=chunk_idx,
+                    chunk_id=f"{doc_id}::{chunk_idx}" if doc_id else "",
                     score=score,
                     text=str(hit.get("document") or ""),
                 )

@@ -17,7 +17,14 @@ from pathlib import Path
 from typing import Iterator, List, Optional
 
 from app.config import Settings
-from app.kb.models import Document, DocumentStatus, KnowledgeBase
+from app.kb.models import (
+    ChatTurn,
+    ChunkMeta,
+    Citation,
+    Document,
+    DocumentStatus,
+    KnowledgeBase,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +61,43 @@ CREATE TABLE IF NOT EXISTS documents (
 );
 """
 
-CREATE_INDEX_SQL = "CREATE INDEX IF NOT EXISTS idx_documents_kb ON documents(kb_id);"
+CREATE_CHAT_TURN_SQL = """
+CREATE TABLE IF NOT EXISTS chat_turns (
+    id              TEXT PRIMARY KEY,
+    kb_id           TEXT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+    question        TEXT NOT NULL,
+    answer          TEXT NOT NULL DEFAULT '',
+    error           TEXT DEFAULT '',
+    citations_json  TEXT NOT NULL DEFAULT '[]',
+    status          TEXT NOT NULL DEFAULT 'ready',
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    latency_ms      INTEGER DEFAULT 0
+);
+"""
+
+CREATE_CHUNK_SQL = """
+CREATE TABLE IF NOT EXISTS chunks (
+    id              TEXT PRIMARY KEY,
+    doc_id          TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    kb_id           TEXT NOT NULL,
+    chunk_idx       INTEGER NOT NULL,
+    content         TEXT NOT NULL,
+    char_count      INTEGER NOT NULL,
+    token_estimate  INTEGER DEFAULT 0,
+    start_offset    INTEGER DEFAULT 0,
+    end_offset      INTEGER DEFAULT 0,
+    created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(doc_id, chunk_idx)
+);
+"""
+
+CREATE_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_documents_kb ON documents(kb_id);\n"
+    "CREATE INDEX IF NOT EXISTS idx_chat_turns_kb_time "
+    "ON chat_turns(kb_id, created_at DESC);\n"
+    "CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id);\n"
+    "CREATE INDEX IF NOT EXISTS idx_chunks_kb ON chunks(kb_id);\n"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +155,54 @@ def _row_to_doc(row: sqlite3.Row) -> Document:
     )
 
 
+def _parse_dt(value, fallback: Optional[datetime] = None) -> datetime:
+    if value is None:
+        return fallback or datetime.utcnow()
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return fallback or datetime.utcnow()
+    return fallback or datetime.utcnow()
+
+
+def _row_to_chat_turn(row: sqlite3.Row) -> ChatTurn:
+    citations_raw = row["citations_json"] or "[]"
+    try:
+        citations_data = json.loads(citations_raw)
+    except json.JSONDecodeError:
+        citations_data = []
+    citations = [Citation(**c) for c in citations_data if isinstance(c, dict)]
+    return ChatTurn(
+        id=row["id"],
+        kb_id=row["kb_id"],
+        question=row["question"],
+        answer=row["answer"] or "",
+        error=row["error"] or "",
+        citations=citations,
+        status=row["status"],
+        created_at=_parse_dt(row["created_at"]),
+        latency_ms=int(row["latency_ms"] or 0),
+    )
+
+
+def _row_to_chunk(row: sqlite3.Row) -> ChunkMeta:
+    return ChunkMeta(
+        id=row["id"],
+        doc_id=row["doc_id"],
+        kb_id=row["kb_id"],
+        chunk_idx=int(row["chunk_idx"]),
+        content=row["content"],
+        char_count=int(row["char_count"] or 0),
+        token_estimate=int(row["token_estimate"] or 0),
+        start_offset=int(row["start_offset"] or 0),
+        end_offset=int(row["end_offset"] or 0),
+        created_at=_parse_dt(row["created_at"]),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
@@ -141,7 +232,11 @@ class SQLiteStorage:
                 return
             with self._connect() as conn:
                 conn.executescript(
-                    CREATE_KB_SQL + CREATE_DOC_SQL + CREATE_INDEX_SQL
+                    CREATE_KB_SQL
+                    + CREATE_DOC_SQL
+                    + CREATE_CHAT_TURN_SQL
+                    + CREATE_CHUNK_SQL
+                    + CREATE_INDEX_SQL
                 )
                 conn.commit()
             self._initialized = True
@@ -343,13 +438,168 @@ class SQLiteStorage:
             return cur.rowcount > 0
 
     # ------------------------------------------------------------------
+    # Chat turns (Q&A history)
+    # ------------------------------------------------------------------
+
+    def save_chat_turn(self, turn: ChatTurn) -> ChatTurn:
+        """Persist a chat turn. Caller is expected to have set ``turn.id``."""
+        self.init()
+        citations_json = json.dumps(
+            [c.model_dump() for c in turn.citations], ensure_ascii=False
+        )
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO chat_turns "
+                "(id, kb_id, question, answer, error, citations_json, status, "
+                " latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    turn.id,
+                    turn.kb_id,
+                    turn.question,
+                    turn.answer,
+                    turn.error or "",
+                    citations_json,
+                    turn.status,
+                    int(turn.latency_ms or 0),
+                ),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM chat_turns WHERE id = ?", (turn.id,)
+            ).fetchone()
+            return _row_to_chat_turn(row)
+
+    def list_chat_turns(self, kb_id: str, limit: int = 50) -> List[ChatTurn]:
+        """List chat turns for a KB, newest first.
+
+        ``limit`` is clamped to ``[1, 500]`` to prevent pathological
+        queries from a buggy client.
+        """
+        self.init()
+        lim = max(1, min(int(limit or 50), 500))
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chat_turns WHERE kb_id = ? "
+                "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (kb_id, lim),
+            ).fetchall()
+            return [_row_to_chat_turn(r) for r in rows]
+
+    def get_chat_turn(self, kb_id: str, turn_id: str) -> Optional[ChatTurn]:
+        self.init()
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM chat_turns WHERE id = ? AND kb_id = ?",
+                (turn_id, kb_id),
+            ).fetchone()
+            return _row_to_chat_turn(row) if row else None
+
+    def delete_chat_turn(self, kb_id: str, turn_id: str) -> bool:
+        self.init()
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM chat_turns WHERE id = ? AND kb_id = ?",
+                (turn_id, kb_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def clear_chat_turns(self, kb_id: str) -> int:
+        """Delete every chat turn belonging to ``kb_id``.
+
+        Returns the number of rows removed.
+        """
+        self.init()
+        with self._lock, self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM chat_turns WHERE kb_id = ?", (kb_id,)
+            )
+            conn.commit()
+            return int(cur.rowcount or 0)
+
+    # ------------------------------------------------------------------
+    # Chunks (chunk-level metadata mirror)
+    # ------------------------------------------------------------------
+
+    def save_chunks_batch(self, chunks: List[ChunkMeta]) -> int:
+        """Upsert a batch of chunk metadata rows.
+
+        Uses ``INSERT OR REPLACE`` so re-indexing the same document
+        overwrites the old chunk rows atomically. Returns the count
+        inserted.
+        """
+        if not chunks:
+            return 0
+        self.init()
+        rows = [
+            (
+                c.id,
+                c.doc_id,
+                c.kb_id,
+                int(c.chunk_idx),
+                c.content,
+                int(c.char_count),
+                int(c.token_estimate or 0),
+                int(c.start_offset or 0),
+                int(c.end_offset or 0),
+            )
+            for c in chunks
+        ]
+        with self._lock, self._connect() as conn:
+            conn.executemany(
+                "INSERT OR REPLACE INTO chunks "
+                "(id, doc_id, kb_id, chunk_idx, content, char_count, "
+                " token_estimate, start_offset, end_offset) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+            conn.commit()
+            return len(rows)
+
+    def delete_chunks_for_doc(self, doc_id: str) -> int:
+        """Drop all chunk rows for ``doc_id``. Returns rows removed."""
+        self.init()
+        with self._lock, self._connect() as conn:
+            cur = conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
+            conn.commit()
+            return int(cur.rowcount or 0)
+
+    def list_chunks_for_doc(
+        self, doc_id: str, limit: int = 100, offset: int = 0
+    ) -> List[ChunkMeta]:
+        """List chunk metadata for a document, ordered by ``chunk_idx``."""
+        self.init()
+        lim = max(1, min(int(limit or 100), 1000))
+        off = max(0, int(offset or 0))
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chunks WHERE doc_id = ? "
+                "ORDER BY chunk_idx ASC LIMIT ? OFFSET ?",
+                (doc_id, lim, off),
+            ).fetchall()
+            return [_row_to_chunk(r) for r in rows]
+
+    def get_chunk(self, chunk_id: str) -> Optional[ChunkMeta]:
+        self.init()
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM chunks WHERE id = ?", (chunk_id,)
+            ).fetchone()
+            return _row_to_chunk(row) if row else None
+
+    # ------------------------------------------------------------------
     # Misc
     # ------------------------------------------------------------------
 
     def reset(self) -> None:
         """Drop & recreate tables. Test-only helper."""
         with self._lock, self._connect() as conn:
-            conn.executescript("DROP TABLE IF EXISTS documents; DROP TABLE IF EXISTS knowledge_bases;")
+            conn.executescript(
+                "DROP TABLE IF EXISTS chat_turns;\n"
+                "DROP TABLE IF EXISTS chunks;\n"
+                "DROP TABLE IF EXISTS documents;\n"
+                "DROP TABLE IF EXISTS knowledge_bases;\n"
+            )
             conn.commit()
             self._initialized = False
         self.init()

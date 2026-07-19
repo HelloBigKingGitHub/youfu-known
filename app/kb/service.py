@@ -10,11 +10,13 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Sequence
 
 from app.config import Settings
 from app.kb.models import (
+    ChunkMeta,
     Document,
     DocumentStatus,
     KBDetail,
@@ -248,6 +250,35 @@ class KBService:
                 metadatas=metadatas,
             )
 
+            # Mirror chunk metadata into SQLite so callers can list /
+            # inspect chunks without round-tripping Chroma. ``INSERT OR
+            # REPLACE`` makes re-ingest of the same document idempotent.
+            chunk_metas: List[ChunkMeta] = []
+            running_offset = 0
+            for i, chunk in enumerate(chunks):
+                text = chunk.text or ""
+                cid = ids[i]
+                start = int(getattr(chunk, "source_offset", 0) or 0)
+                # ``end_offset`` is approximated as the running cursor
+                # after the chunk text plus any prefix; this gives the
+                # caller a usable range for highlighting / debugging.
+                end = start + len(text)
+                chunk_metas.append(
+                    ChunkMeta(
+                        id=cid,
+                        doc_id=doc_id,
+                        kb_id=kb_id,
+                        chunk_idx=i,
+                        content=text,
+                        char_count=len(text),
+                        start_offset=start,
+                        end_offset=end,
+                        created_at=datetime.utcnow(),
+                    )
+                )
+                running_offset = end
+            self._storage.save_chunks_batch(chunk_metas)
+
             self._storage.update_document_status(
                 doc_id,
                 DocumentStatus.READY,
@@ -298,6 +329,10 @@ class KBService:
             )
         # Best-effort: remove vector chunks first.
         self._vectorstore.delete_by_doc(kb_id, doc_id)
+        # Mirror chunk deletion into SQLite so the metadata table stays
+        # in sync with Chroma. CASCADE on the FK would also handle this,
+        # but a manual drop is friendlier to ``adjust_kb_counts`` below.
+        self._storage.delete_chunks_for_doc(doc_id)
         # Decrement KB counters (clamped at zero).
         deleted = self._storage.delete_document(doc_id)
         if deleted:

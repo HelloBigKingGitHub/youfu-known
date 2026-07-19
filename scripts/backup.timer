@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily backup of youfu-known
+Documentation=https://github.com/youfu/youfu-known
+
+[Timer]
+# 每日 03:00 + 周日 (重复触发, 备份脚本内部去重 + 保留策略)
+OnCalendar=*-*-* 03:00:00
+OnCalendar=Sun *-*-* 03:00:00
+# 上次错过的 timer 会在下次开机后补跑一次
+Persistent=true
+# 5 分钟随机抖动, 避免多机同时拉取
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

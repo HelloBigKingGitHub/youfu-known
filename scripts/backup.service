@@ -1,0 +1,25 @@
+[Unit]
+Description=youfu-known data backup
+Documentation=https://github.com/youfu/youfu-known
+# 不需要网络 (本地 tar 即可), 但确保在任何网络服务之前即可
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@INSTALL_DIR@
+Environment="YOUFU_INSTALL_DIR=@INSTALL_DIR"
+Environment="YOUFU_BACKUP_DIR=@BACKUP_DIR@"
+Environment="PATH=@INSTALL_DIR/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=@INSTALL_DIR/scripts/backup.sh
+# 不要让 systemd 的 Cgroup 限制影响 tar; tar 可能大量读写 IO
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+Nice=10
+# Hardening (参考 youfu-known.service)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=@BACKUP_DIR@ @INSTALL_DIR/storage
