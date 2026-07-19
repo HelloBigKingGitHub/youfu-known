@@ -16,6 +16,8 @@ import type { KB } from './types'
 import { api } from './api'
 import { KnowledgeBaseSidebar } from './components/KnowledgeBaseSidebar'
 import { KBMainArea } from './components/KBMainArea'
+import { KBManageTab } from './components/KBManageTab'
+import { KBChatTab } from './components/KBChatTab'
 import { EmptyState } from './components/EmptyState'
 
 export function App() {
@@ -95,7 +97,11 @@ export function App() {
       <Box flex={1} h={{ base: 'calc(100vh - 56px)', md: '100vh' }} overflow="auto">
         <Routes>
           <Route path="/" element={<RootRedirect kbs={kbs} loading={loading} />} />
-          <Route path="/kbs/:kbId" element={<KBRoute onKBDeleted={refreshKBs} />} />
+          <Route path="/kbs/:kbId" element={<KBShell onKBDeleted={refreshKBs} />}>
+            <Route index element={<Navigate to="manage" replace />} />
+            <Route path="manage" element={<KBManageTab />} />
+            <Route path="chat" element={<KBChatTab />} />
+          </Route>
           <Route path="*" element={<EmptyState />} />
         </Routes>
       </Box>
@@ -109,7 +115,7 @@ function RootRedirect({ kbs, loading }: { kbs: KB[]; loading: boolean }) {
   return <Navigate to={`/kbs/${kbs[0].id}`} replace />
 }
 
-function KBRoute({ onKBDeleted: _onKBDeleted }: { onKBDeleted: () => void }) {
+function KBShell({ onKBDeleted: _onKBDeleted }: { onKBDeleted: () => void }) {
   const { kbId } = useParams<{ kbId: string }>()
   const navigate = useNavigate()
   const [exists, setExists] = useState<boolean | null>(null)

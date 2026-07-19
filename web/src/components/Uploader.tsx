@@ -1,5 +1,15 @@
-// 拖拽上传 + 按钮选文件
-import { Box, Button, Flex, HStack, Icon, Progress, Text, useToast, VStack } from '@chakra-ui/react'
+// 拖拽上传 + 整块可点击
+// 现代 SaaS 风格: 圆角大, dashed 边框, 居中布局, 整块点击 + 拖拽
+import {
+  Box,
+  Button,
+  Flex,
+  Icon,
+  Progress,
+  Text,
+  useToast,
+  VStack,
+} from '@chakra-ui/react'
 import { AttachmentIcon } from '@chakra-ui/icons'
 import { useRef, useState } from 'react'
 import { api, ApiError } from '../api'
@@ -17,6 +27,10 @@ export function Uploader({ kbId, onUploaded }: Props) {
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState({ loaded: 0, total: 0 })
   const toast = useToast()
+
+  const openPicker = () => {
+    if (!uploading) inputRef.current?.click()
+  }
 
   const handleFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return
@@ -43,56 +57,86 @@ export function Uploader({ kbId, onUploaded }: Props) {
       if (inputRef.current) inputRef.current.value = ''
     }
   }
+
   return (
     <Box
-      borderRadius="md"
+      borderRadius="xl"
       border="2px dashed"
-      borderColor={dragOver ? 'brand.500' : 'gray.300'}
+      borderColor={dragOver ? 'brand.500' : 'surface.border'}
       bg={dragOver ? 'brand.50' : 'white'}
-      p={{ base: 4, md: 5 }}
-      transition="all 0.15s"
+      p={{ base: 5, md: 6 }}
+      cursor={uploading ? 'default' : 'pointer'}
+      transition="all 0.2s"
+      _hover={!uploading ? { borderColor: 'brand.300', bg: 'brand.50' } : undefined}
+      onClick={openPicker}
+      role="button"
+      aria-label="点击或拖拽上传文件"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          openPicker()
+        }
+      }}
       onDragOver={(e) => {
         e.preventDefault()
-        setDragOver(true)
+        if (!uploading) setDragOver(true)
       }}
-      onDragLeave={() => setDragOver(false)}
+      onDragLeave={(e) => {
+        e.preventDefault()
+        setDragOver(false)
+      }}
       onDrop={(e) => {
         e.preventDefault()
         setDragOver(false)
-        handleFiles(e.dataTransfer.files)
+        if (!uploading) handleFiles(e.dataTransfer.files)
       }}
     >
-      <VStack spacing={3}>
-        <Icon as={AttachmentIcon} boxSize={{ base: 5, md: 6 }} color={dragOver ? 'brand.500' : 'gray.400'} />
-        <Text fontSize="sm" color={dragOver ? 'brand.700' : 'gray.600'} textAlign="center">
-          {dragOver ? '松开以上传' : '拖文件到这里, 或点按钮选文件'}
-        </Text>
-        <Text fontSize="xs" color="gray.400">
-          支持 PDF / Word / Markdown / TXT / HTML
-        </Text>
-        <HStack direction={{ base: 'column', sm: 'row' }} spacing={2} w="100%">
-          <Button
-            size="sm"
-            colorScheme="brand"
-            onClick={() => inputRef.current?.click()}
-            isLoading={uploading}
-            loadingText="上传中"
-            w={{ base: '100%', sm: 'auto' }}
-            minH={{ base: '44px', sm: 'auto' }}
-          >
-            选择文件
-          </Button>
-          <input
-            ref={inputRef}
-            type="file"
-            multiple
-            accept={ACCEPT}
-            style={{ display: 'none' }}
-            onChange={(e) => handleFiles(e.target.files)}
-          />
-        </HStack>
+      <VStack spacing={3} align="center">
+        <Flex
+          align="center"
+          justify="center"
+          w={{ base: '48px', md: '56px' }}
+          h={{ base: '48px', md: '56px' }}
+          borderRadius="2xl"
+          bg={dragOver ? 'brand.100' : 'surface.sunken'}
+          color={dragOver ? 'brand.600' : 'gray.400'}
+          transition="all 0.2s"
+        >
+          <Icon as={AttachmentIcon} boxSize={{ base: 5, md: 6 }} />
+        </Flex>
+        <VStack spacing={1} textAlign="center">
+          <Text fontSize={{ base: 'sm', md: 'md' }} fontWeight="semibold" color={dragOver ? 'brand.700' : 'gray.700'}>
+            {dragOver ? '松开以上传' : '点击或拖文件到这里上传'}
+          </Text>
+          <Text fontSize="xs" color="gray.500">
+            支持 PDF / Word / Markdown / TXT / HTML, 可多选
+          </Text>
+        </VStack>
+        <Button
+          size="sm"
+          colorScheme="brand"
+          variant={dragOver ? 'solid' : 'outline'}
+          onClick={(e) => {
+            e.stopPropagation()
+            openPicker()
+          }}
+          isLoading={uploading}
+          loadingText="上传中"
+          minH={{ base: '44px', md: 'auto' }}
+        >
+          选择文件
+        </Button>
+        <input
+          ref={inputRef}
+          type="file"
+          multiple
+          accept={ACCEPT}
+          style={{ display: 'none' }}
+          onChange={(e) => handleFiles(e.target.files)}
+        />
         {uploading && progress.total > 0 && (
-          <Box w="100%">
+          <Box w="100%" pt={1}>
             <Progress
               value={(progress.loaded / progress.total) * 100}
               size="sm"

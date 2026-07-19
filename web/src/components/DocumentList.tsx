@@ -1,8 +1,9 @@
-// 文档列表 - 响应式: 桌面表格, 移动端卡片
+// 文档列表 - 现代 SaaS 风格
+// 桌面 / 平板: 表格 + pill 状态徽章 (带前导圆点/旋转图标)
+// 移动端: 卡片列表
 import {
   Badge,
   Box,
-  Button,
   Flex,
   HStack,
   Heading,
@@ -31,18 +32,35 @@ interface Props {
   onChange: () => void
 }
 
-const STATUS_COLOR: Record<DocumentStatus, string> = {
-  pending: 'gray',
-  processing: 'blue',
-  ready: 'green',
-  failed: 'red',
-}
-
-const STATUS_LABEL: Record<DocumentStatus, string> = {
-  pending: '等待',
-  processing: '处理中',
-  ready: '就绪',
-  failed: '失败',
+// 状态视觉 (圆点 + pill 徽章)
+const STATUS_STYLES: Record<
+  DocumentStatus,
+  { dotColor: string; bg: string; color: string; label: string }
+> = {
+  pending: {
+    dotColor: 'gray.400',
+    bg: 'gray.100',
+    color: 'gray.600',
+    label: '等待',
+  },
+  processing: {
+    dotColor: 'blue.500',
+    bg: 'blue.50',
+    color: 'blue.600',
+    label: '处理中',
+  },
+  ready: {
+    dotColor: 'green.500',
+    bg: 'green.50',
+    color: 'green.600',
+    label: '就绪',
+  },
+  failed: {
+    dotColor: 'red.500',
+    bg: 'red.50',
+    color: 'red.600',
+    label: '失败',
+  },
 }
 
 function formatSize(bytes: number): string {
@@ -51,46 +69,74 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
-// 复用状态徽章
+// 状态徽章: 前导圆点 / spinner + pill 文字
 function StatusBadge({ status, error }: { status: DocumentStatus; error: string }) {
-  if (status === 'processing' || status === 'pending') {
+  const s = STATUS_STYLES[status]
+  const isActive = status === 'processing' || status === 'pending'
+  const badge = (
+    <Badge
+      px={2}
+      py={1}
+      borderRadius="full"
+      bg={s.bg}
+      color={s.color}
+      fontWeight="medium"
+      fontSize="xs"
+      display="inline-flex"
+      alignItems="center"
+      gap={1.5}
+    >
+      {isActive ? (
+        <Spinner size="xs" color={s.dotColor} speed="0.8s" />
+      ) : (
+        <Box w={1.5} h={1.5} borderRadius="full" bg={s.dotColor} />
+      )}
+      {s.label}
+    </Badge>
+  )
+  if (status === 'failed' && error) {
     return (
-      <HStack spacing={2}>
-        <Spinner size="xs" color="blue.500" />
-        <Badge colorScheme={STATUS_COLOR[status]}>{STATUS_LABEL[status]}</Badge>
-      </HStack>
+      <Tooltip label={error} placement="top" hasArrow>
+        {badge}
+      </Tooltip>
     )
   }
-  return (
-    <Tooltip label={error || ''} isDisabled={!error} placement="top">
-      <Badge colorScheme={STATUS_COLOR[status]}>{STATUS_LABEL[status]}</Badge>
-    </Tooltip>
-  )
+  return badge
 }
 
 // 移动端卡片
-function DocCard({ doc, onDelete, onRefresh }: { doc: Document; onDelete: (d: Document) => void; onRefresh: () => void }) {
+function DocCard({
+  doc,
+  onDelete,
+  onRefresh,
+}: {
+  doc: Document
+  onDelete: (d: Document) => void
+  onRefresh: () => void
+}) {
   return (
     <Box
       bg="white"
-      borderRadius="md"
+      borderRadius="xl"
       border="1px"
-      borderColor="gray.200"
+      borderColor="surface.border"
       p={3}
       mb={2}
+      boxShadow="xs"
+      transition="all 0.15s"
+      _hover={{ boxShadow: 'sm', borderColor: 'brand.200' }}
     >
       <Flex justify="space-between" align="start" gap={2}>
         <Box flex={1} minW={0}>
-          <Heading size="sm" noOfLines={1} mb={1}>
+          <Heading size="sm" noOfLines={1} mb={1.5}>
             {doc.filename}
           </Heading>
-          <HStack spacing={3} fontSize="xs" color="gray.500" flexWrap="wrap">
-            <Text>大小: {formatSize(doc.size_bytes)}</Text>
-            <Text>chunks: {doc.chunk_count}</Text>
+          <HStack spacing={3} fontSize="xs" color="gray.500" flexWrap="wrap" mb={2}>
+            <Text>{formatSize(doc.size_bytes)}</Text>
+            <Text>·</Text>
+            <Text>{doc.chunk_count} chunks</Text>
           </HStack>
-          <Box mt={2}>
-            <StatusBadge status={doc.status} error={doc.error} />
-          </Box>
+          <StatusBadge status={doc.status} error={doc.error} />
         </Box>
         <VStack spacing={1}>
           <Tooltip label="刷新状态" placement="left">
@@ -102,6 +148,8 @@ function DocCard({ doc, onDelete, onRefresh }: { doc: Document; onDelete: (d: Do
               icon={<RepeatIcon />}
               minW="44px"
               minH="44px"
+              color="gray.500"
+              _hover={{ color: 'brand.600', bg: 'brand.50' }}
             />
           </Tooltip>
           <Tooltip label="删除文档" placement="left">
@@ -166,8 +214,15 @@ export function DocumentList({ kbId, documents, onChange }: Props) {
 
   if (documents.length === 0) {
     return (
-      <Box bg="white" borderRadius="md" border="1px" borderColor="gray.200" p={6}>
-        <Text color="gray.500" textAlign="center">
+      <Box
+        bg="white"
+        borderRadius="xl"
+        border="1px dashed"
+        borderColor="surface.border"
+        p={6}
+        textAlign="center"
+      >
+        <Text color="gray.500" fontSize="sm">
           还没有文档, 拖文件到上方上传区或点按钮选文件
         </Text>
       </Box>
@@ -197,60 +252,85 @@ export function DocumentList({ kbId, documents, onChange }: Props) {
 
   // 桌面 / 平板: 表格
   return (
-    <Box bg="white" borderRadius="md" border="1px" borderColor="gray.200" overflowX="auto">
+    <Box
+      bg="white"
+      borderRadius="xl"
+      border="1px"
+      borderColor="surface.border"
+      boxShadow="sm"
+      overflow="hidden"
+    >
       <Table size="sm" variant="simple">
-        <Thead bg="gray.50">
+        <Thead bg="surface.sunken">
           <Tr>
-            <Th>文件名</Th>
-            <Th isNumeric>大小</Th>
-            <Th>状态</Th>
-            <Th isNumeric>chunks</Th>
-            <Th>操作</Th>
+            <Th borderColor="surface.border" color="gray.600" fontWeight="semibold">
+              文件名
+            </Th>
+            <Th isNumeric borderColor="surface.border" color="gray.600" fontWeight="semibold">
+              大小
+            </Th>
+            <Th borderColor="surface.border" color="gray.600" fontWeight="semibold">
+              状态
+            </Th>
+            <Th isNumeric borderColor="surface.border" color="gray.600" fontWeight="semibold">
+              chunks
+            </Th>
+            <Th borderColor="surface.border" color="gray.600" fontWeight="semibold">
+              操作
+            </Th>
           </Tr>
         </Thead>
         <Tbody>
           {documents.map((doc) => (
-            <Tr key={doc.id}>
-              <Td>
-                <Text fontSize="sm" noOfLines={1} maxW="300px">
+            <Tr
+              key={doc.id}
+              transition="background 0.15s"
+              _hover={{ bg: 'surface.sunken' }}
+            >
+              <Td borderColor="surface.border">
+                <Text fontSize="sm" noOfLines={1} maxW="300px" fontWeight="medium">
                   {doc.filename}
                 </Text>
               </Td>
-              <Td isNumeric>
+              <Td isNumeric borderColor="surface.border">
                 <Text fontSize="sm" color="gray.600">
                   {formatSize(doc.size_bytes)}
                 </Text>
               </Td>
-              <Td>
+              <Td borderColor="surface.border">
                 <StatusBadge status={doc.status} error={doc.error} />
               </Td>
-              <Td isNumeric>
+              <Td isNumeric borderColor="surface.border">
                 <Text fontSize="sm" color="gray.600">
                   {doc.chunk_count}
                 </Text>
               </Td>
-              <Td>
+              <Td borderColor="surface.border">
                 <HStack spacing={1}>
                   <Tooltip label="刷新状态" placement="top">
-                    <Button
+                    <IconButton
                       size="xs"
                       variant="ghost"
                       onClick={onChange}
                       aria-label="刷新"
-                    >
-                      <RepeatIcon />
-                    </Button>
+                      icon={<RepeatIcon />}
+                      minW="32px"
+                      minH="32px"
+                      color="gray.500"
+                      _hover={{ color: 'brand.600', bg: 'brand.50' }}
+                    />
                   </Tooltip>
                   <Tooltip label="删除文档" placement="top">
-                    <Button
+                    <IconButton
                       size="xs"
                       variant="ghost"
                       colorScheme="red"
                       onClick={() => handleDelete(doc)}
                       aria-label="删除"
-                    >
-                      <DeleteIcon />
-                    </Button>
+                      icon={<DeleteIcon />}
+                      minW="32px"
+                      minH="32px"
+                    />
                   </Tooltip>
                 </HStack>
               </Td>
@@ -258,7 +338,15 @@ export function DocumentList({ kbId, documents, onChange }: Props) {
           ))}
         </Tbody>
       </Table>
-      <Flex px={4} py={2} fontSize="xs" color="gray.400" borderTop="1px" borderColor="gray.100">
+      <Flex
+        px={4}
+        py={2}
+        fontSize="xs"
+        color="gray.400"
+        borderTop="1px"
+        borderColor="surface.border"
+        bg="surface.sunken"
+      >
         处理中 / 等待中的文档每 2 秒自动刷新状态
       </Flex>
     </Box>
