@@ -3,6 +3,8 @@
 # 把 youfu-known 部署到树莓派
 #
 # 流程:
+#   0. 检查本地 git 状态 (未 commit 的改动会阻止 deploy)
+#      若有远端 origin, 自动 push 到 main
 #   1. 验证 SSH 连通 (expect + 密码 或 sshpass 或 key)
 #   2. rsync 同步项目代码到 Pi (排除 .venv/node_modules/storage 等)
 #   3. Pi 上跑 install.sh (拉依赖、构建前端、注册服务)
@@ -21,6 +23,7 @@
 #   PI_PASSWORD=     (若用 key 认证, 留空)
 #   PI_INSTALL_DIR=/opt/youfu-known
 #   PI_PORT_HTTP=8000
+#   SKIP_GIT_PUSH=1  (跳过 git 推送, 默认会自动 push main)
 
 set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -112,6 +115,36 @@ fi
 # 看 Pi 基础环境
 log_info "Pi 系统信息:"
 pi_run "uname -a; echo ARCH=\$(uname -m); head -1 /etc/os-release; cat /proc/device-tree/model 2>/dev/null | tr -d '\0' || echo 'no_dt'; python3 --version 2>&1; node --version 2>&1" 2>&1 | sed 's/^/    /'
+
+# -------- 1. Git 状态 + push --------
+if [[ "${SKIP_GIT_PUSH:-0}" != "1" ]]; then
+    log_step "1/6 检查本地 git 状态"
+    if git rev-parse --is-inside-work-tree &>/dev/null; then
+        # 拒绝 dirty 工作区 (避免推送半成品)
+        if ! git diff --quiet HEAD 2>/dev/null; then
+            log_error "本地 git 有未提交的改动, 请先 commit 或 stash"
+            log_error "若确认要强行 deploy, 设 SKIP_GIT_PUSH=1 跳过 git push 步骤"
+            git status --short | head -10
+            exit 1
+        fi
+        # 推送当前分支 (如已配 origin)
+        if git remote get-url origin &>/dev/null; then
+            local_branch=$(git rev-parse --abbrev-ref HEAD)
+            log_info "推送本地 main 到 origin..."
+            if git push origin "${local_branch}" 2>&1 | tail -3; then
+                log_info "✓ 已推送到 $(git remote get-url origin)"
+            else
+                log_warn "⚠️ git push 失败 (可能无网络或远端无权限), 继续 deploy"
+            fi
+        else
+            log_info "未配 origin remote, 跳过 git push"
+        fi
+    else
+        log_warn "非 git 仓库, 跳过 git push"
+    fi
+else
+    log_info "SKIP_GIT_PUSH=1, 跳过 git push"
+fi
 
 # -------- 2. rsync --------
 log_step "2/5 rsync 同步代码到 ${PI_INSTALL_DIR}"
