@@ -43,14 +43,13 @@ export function Uploader({ kbId, onUploaded }: Props) {
       if (inputRef.current) inputRef.current.value = ''
     }
   }
-
   return (
     <Box
       borderRadius="md"
       border="2px dashed"
       borderColor={dragOver ? 'brand.500' : 'gray.300'}
       bg={dragOver ? 'brand.50' : 'white'}
-      p={5}
+      p={{ base: 4, md: 5 }}
       transition="all 0.15s"
       onDragOver={(e) => {
         e.preventDefault()
@@ -64,20 +63,22 @@ export function Uploader({ kbId, onUploaded }: Props) {
       }}
     >
       <VStack spacing={3}>
-        <Icon as={AttachmentIcon} boxSize={6} color={dragOver ? 'brand.500' : 'gray.400'} />
-        <Text fontSize="sm" color={dragOver ? 'brand.700' : 'gray.600'}>
+        <Icon as={AttachmentIcon} boxSize={{ base: 5, md: 6 }} color={dragOver ? 'brand.500' : 'gray.400'} />
+        <Text fontSize="sm" color={dragOver ? 'brand.700' : 'gray.600'} textAlign="center">
           {dragOver ? '松开以上传' : '拖文件到这里, 或点按钮选文件'}
         </Text>
         <Text fontSize="xs" color="gray.400">
           支持 PDF / Word / Markdown / TXT / HTML
         </Text>
-        <HStack>
+        <HStack direction={{ base: 'column', sm: 'row' }} spacing={2} w="100%">
           <Button
             size="sm"
             colorScheme="brand"
             onClick={() => inputRef.current?.click()}
             isLoading={uploading}
             loadingText="上传中"
+            w={{ base: '100%', sm: 'auto' }}
+            minH={{ base: '44px', sm: 'auto' }}
           >
             选择文件
           </Button>

@@ -83,7 +83,7 @@ export function NewKnowledgeBaseButton({ onCreated }: Props) {
         新建知识库
       </Button>
 
-      <Modal isOpen={isOpen} onClose={onClose} size="md">
+      <Modal isOpen={isOpen} onClose={onClose} size="md" isCentered>
         <ModalOverlay />
         <ModalContent>
           <ModalHeader>新建知识库</ModalHeader>

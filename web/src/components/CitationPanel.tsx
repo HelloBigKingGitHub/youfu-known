@@ -36,7 +36,9 @@ function CitationItem({ citation: c }: { citation: Citation }) {
         _hover={{ bg: 'gray.100' }}
         borderRadius="sm"
         px={2}
-        py={1}
+        py={{ base: 2, md: 1 }}
+        flexWrap="wrap"
+        minH={{ base: '44px', md: 'auto' }}
       >
         <IconButton
           aria-label={open ? '收起' : '展开'}

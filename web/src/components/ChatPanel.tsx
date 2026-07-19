@@ -93,7 +93,7 @@ export function ChatPanel({ kbId }: Props) {
   }
 
   return (
-    <Box bg="white" borderRadius="md" border="1px" borderColor="gray.200" p={4}>
+    <Box bg="white" borderRadius="md" border="1px" borderColor="gray.200" p={{ base: 3, md: 4 }}>
       <Flex justify="space-between" align="center" mb={3}>
         <Text fontWeight="semibold">问答</Text>
         <HStack spacing={2}>
@@ -111,7 +111,7 @@ export function ChatPanel({ kbId }: Props) {
               }}
             />
           )}
-          <Text fontSize="xs" color="gray.400">
+          <Text fontSize="xs" color="gray.400" display={{ base: 'none', md: 'block' }}>
             基于本知识库内容回答, 流式输出开发中
           </Text>
         </HStack>
@@ -120,7 +120,7 @@ export function ChatPanel({ kbId }: Props) {
       <Box
         ref={listRef}
         onScroll={onScroll}
-        maxH="420px"
+        maxH={{ base: '50vh', md: '420px' }}
         overflowY="auto"
         mb={3}
         border="1px"
@@ -192,7 +192,7 @@ export function ChatPanel({ kbId }: Props) {
         )}
       </Box>
 
-      <HStack>
+      <Flex direction={{ base: 'column', md: 'row' }} gap={2}>
         <Input
           ref={inputRef}
           placeholder="输入问题, 回车发送"
@@ -200,6 +200,7 @@ export function ChatPanel({ kbId }: Props) {
           onChange={(e) => setQuestion(e.target.value)}
           onKeyDown={onKeyDown}
           isDisabled={sending}
+          flex={1}
         />
         <Button
           colorScheme="brand"
@@ -207,10 +208,12 @@ export function ChatPanel({ kbId }: Props) {
           isLoading={sending}
           loadingText="发送中"
           isDisabled={!question.trim()}
+          w={{ base: '100%', md: 'auto' }}
+          minH={{ base: '44px', md: 'auto' }}
         >
           发送
         </Button>
-      </HStack>
+      </Flex>
     </Box>
   )
 }
