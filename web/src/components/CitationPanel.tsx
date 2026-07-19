@@ -1,5 +1,5 @@
-// 引用列表 - 可展开查看原文片段
-import { Badge, Box, Collapse, HStack, IconButton, Text, VStack } from '@chakra-ui/react'
+// 引用列表 - 整体默认折叠, 点按钮展开所有引用项
+import { Badge, Box, Button, Collapse, HStack, IconButton, Text, VStack } from '@chakra-ui/react'
 import { ChevronDownIcon, ChevronRightIcon } from '@chakra-ui/icons'
 import { useState } from 'react'
 import type { Citation } from '../types'
@@ -9,18 +9,34 @@ interface Props {
 }
 
 export function CitationPanel({ citations }: Props) {
+  const [expanded, setExpanded] = useState(false)
   if (citations.length === 0) return null
 
   return (
-    <Box mt={3} bg="gray.50" borderRadius="md" p={3} border="1px" borderColor="gray.200">
-      <Text fontSize="xs" fontWeight="bold" color="gray.500" mb={2}>
+    <Box mt={3} bg="surface.sunken" borderRadius="lg" border="1px" borderColor="surface.border" overflow="hidden">
+      <Button
+        variant="ghost"
+        size="sm"
+        w="full"
+        justifyContent="flex-start"
+        leftIcon={expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+        onClick={() => setExpanded(!expanded)}
+        fontWeight="semibold"
+        color="gray.600"
+        borderRadius={0}
+        px={3}
+        py={2}
+        _hover={{ bg: 'gray.100' }}
+      >
         引用 ({citations.length})
-      </Text>
-      <VStack align="stretch" spacing={1}>
-        {citations.map((c) => (
-          <CitationItem key={c.n} citation={c} />
-        ))}
-      </VStack>
+      </Button>
+      <Collapse in={expanded} animateOpacity unmountOnExit>
+        <VStack align="stretch" spacing={1} px={3} pb={3}>
+          {citations.map((c) => (
+            <CitationItem key={c.n} citation={c} />
+          ))}
+        </VStack>
+      </Collapse>
     </Box>
   )
 }

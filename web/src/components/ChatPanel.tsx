@@ -237,9 +237,11 @@ export function ChatPanel({ kbId }: Props) {
         )}
       </Box>
 
-      {/* 输入框: Textarea + 内嵌发送按钮 */}
+      {/* 输入区: 移动端垂直堆叠 (textarea + 按钮行) / 桌面横向 (textarea 左, 按钮右)
+          永远对齐 baseline, 修复 iPhone Pro Max 按钮错位 */}
       <Flex
-        align="flex-end"
+        direction={{ base: 'column', md: 'row' }}
+        align={{ base: 'stretch', md: 'flex-end' }}
         gap={2}
         bg="surface.sunken"
         borderRadius="xl"
@@ -271,19 +273,37 @@ export function ChatPanel({ kbId }: Props) {
           _focus={{ boxShadow: 'none' }}
           _focusVisible={{ boxShadow: 'none' }}
           overflow="auto"
+          css={{
+            scrollbarWidth: 'none',
+            '&::-webkit-scrollbar': { display: 'none' },
+          }}
         />
-        <Button
-          colorScheme="brand"
-          size="md"
-          onClick={handleSend}
-          isLoading={sending}
-          isDisabled={!question.trim()}
-          leftIcon={<ArrowUpIcon />}
-          px={4}
-          minH="40px"
+        <Flex
+          justify={{ base: 'space-between', md: 'flex-end' }}
+          align="center"
+          w={{ base: 'full', md: 'auto' }}
+          gap={2}
         >
-          发送
-        </Button>
+          <Text
+            fontSize="xs"
+            color="gray.400"
+            display={{ base: 'block', md: 'none' }}
+          >
+            Enter 发送 · Shift+Enter 换行
+          </Text>
+          <Button
+            colorScheme="brand"
+            size="md"
+            onClick={handleSend}
+            isLoading={sending}
+            isDisabled={!question.trim()}
+            leftIcon={<ArrowUpIcon />}
+            px={4}
+            minH="40px"
+          >
+            发送
+          </Button>
+        </Flex>
       </Flex>
     </Box>
   )
