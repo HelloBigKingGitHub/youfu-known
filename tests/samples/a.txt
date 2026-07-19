@@ -1,0 +1,14 @@
+youfu-known 是一个本地化的个人知识库 + RAG 系统。
+它支持上传 PDF / Word / Markdown / HTML / 纯文本, 然后基于 Qwen3-Embedding + Chroma 向量库做语义检索, 最后调用 MiniMax 大模型生成带引用的回答。
+
+Key features:
+- 完全本地存储文件与向量元数据, 只在调用 LLM / Embedding 时走外网。
+- 支持多知识库: 每个知识库 = 一个独立的 Chroma Collection。
+- 引用透明: 每个回答会带上 [n] 形式的来源标注。
+
+Example workflow:
+1. 用户在前端拖拽上传一份 PDF;
+2. 后端把文件落到 storage/uploads/{kb_id}/{doc_id}.pdf;
+3. 后台任务加载 -> 切块 -> Embedding -> 写入 Chroma;
+4. 状态机: pending -> processing -> ready / failed;
+5. 用户提问时, 先召回 top-k 个片段, 再交给 MiniMax 汇总成答案。

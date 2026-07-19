@@ -1,0 +1,33 @@
+[Unit]
+Description=youfu-known - personal knowledge base + RAG service
+Documentation=https://github.com/youfu/youfu-known
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@INSTALL_DIR@
+Environment="YOUFU_KNOWN_ROOT=@INSTALL_DIR"
+Environment="PATH=@INSTALL_DIR/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=@INSTALL_DIR/.venv/bin/uvicorn main:app \
+    --host @HOST@ \
+    --port @PORT@ \
+    --workers 1 \
+    --no-access-log
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+StandardOutput=append:/var/log/youfu-known/access.log
+StandardError=append:/var/log/youfu-known/error.log
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=@INSTALL_DIR/storage /var/log/youfu-known
+
+[Install]
+WantedBy=multi-user.target

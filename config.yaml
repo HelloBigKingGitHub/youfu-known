@@ -1,0 +1,60 @@
+# =============================================================================
+# youfu-known · 个人知识库 RAG 系统配置
+# =============================================================================
+# 修改后重启服务生效。凭据也可放 .env (优先级更高):
+#   DASHSCOPE_API_KEY=*** =============================================================================
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+# ---------------------------------------------------------------------------
+# LLM (对话): MiniMax, OpenAI 兼容
+# ---------------------------------------------------------------------------
+chat:
+  base_url: "https://api.MiniMax.chat/v1"
+  api_key: "REPLACE_ME"  # 用 .env 的 MINIMAX_API_KEY 覆盖
+  model: "MiniMax-Text-01"
+  timeout: 60
+
+# ---------------------------------------------------------------------------
+# Embedding: 阿里云百炼 (Qwen3-Embedding 系列), OpenAI 兼容
+# ---------------------------------------------------------------------------
+embedding:
+  provider: "dashscope"                # 当前固定 dashscope
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  api_key: "REPLACE_ME"                # 用 .env 的 DASHSCOPE_API_KEY 覆盖
+  model: "text-embedding-v3"           # Qwen3-Embedding 系列, 1024 维
+  dim: 1024                            # 向量维度, 必须与 Chroma collection 维度一致
+  batch_size: 10                       # DashScope 硬限: 单次 batch ≤ 10
+  timeout: 30
+
+storage:
+  # 原始上传文件与 Chroma 持久化目录 (相对项目根)
+  upload_dir: "./storage/uploads"
+  chroma_dir: "./storage/chroma"
+  meta_db: "./storage/knowledge_base.sqlite3"
+
+rag:
+  # 文本切块参数
+  chunk_size: 600        # 每块目标字符数
+  chunk_overlap: 80      # 相邻块重叠字符
+  separators: ["\n\n", "\n", "。", "!", "?", "！", "?", " ", ""]
+
+  # 检索参数
+  top_k: 6               # 召回片段数
+  score_threshold: 0.0   # 相似度阈值 (<0 关闭, Chroma 返回的是距离, 越大越不相似)
+
+  # Prompt
+  system_prompt: |
+    你是用户的个人知识库助手。请严格基于下方【参考资料】回答问题。
+    要求:
+    1. 只用参考资料中的事实,不要编造。
+    2. 若资料不足以回答,直接说"知识库中没有相关信息"。
+    3. 回答末尾用 [n] 标注引用的资料编号 (n 从 1 开始)。
+    4. 回答用中文,简洁准确。
+  max_context_chars: 8000  # 拼接到 prompt 的资料总字符上限
+
+upload:
+  max_file_size_mb: 50
+  allowed_extensions: [".pdf", ".docx", ".doc", ".md", ".txt", ".html", ".htm"]
