@@ -1,4 +1,5 @@
 // 选中 KB 后的主区域: 上传 + 文档列表 + 问答
+// 响应式: 移动端 padding 减小, heading 字号减小
 import { Box, Flex, Heading, Text, VStack } from '@chakra-ui/react'
 import { useCallback, useEffect, useState } from 'react'
 import type { Document, KB } from '../types'
@@ -38,19 +39,19 @@ export function KBMainArea({ kbId }: Props) {
 
   if (loading || !kb) {
     return (
-      <Flex flex={1} align="center" justify="center" h="100vh">
+      <Flex flex={1} align="center" justify="center" h="100%">
         <Text color="gray.500">加载中...</Text>
       </Flex>
     )
   }
 
   return (
-    <Box flex={1} h="100vh" overflowY="auto" p={6} bg="gray.50">
-      <VStack align="stretch" spacing={5} maxW="960px" mx="auto">
+    <Box flex={1} h="100%" overflowY="auto" p={{ base: 3, md: 5, lg: 6 }} bg="gray.50">
+      <VStack align="stretch" spacing={{ base: 3, md: 5 }} maxW="960px" mx="auto">
         <Box>
-          <Heading size="lg">{kb.name}</Heading>
+          <Heading size={{ base: 'md', md: 'lg' }}>{kb.name}</Heading>
           {kb.description && (
-            <Text color="gray.500" mt={1}>
+            <Text color="gray.500" mt={1} fontSize={{ base: 'sm', md: 'md' }}>
               {kb.description}
             </Text>
           )}

@@ -1,10 +1,12 @@
-// 文档表格 + 状态轮询 + 删除
+// 文档列表 - 响应式: 桌面表格, 移动端卡片
 import {
   Badge,
   Box,
   Button,
   Flex,
   HStack,
+  Heading,
+  IconButton,
   Spinner,
   Table,
   Tbody,
@@ -14,6 +16,8 @@ import {
   Thead,
   Tooltip,
   Tr,
+  VStack,
+  useBreakpointValue,
   useToast,
 } from '@chakra-ui/react'
 import { DeleteIcon, RepeatIcon } from '@chakra-ui/icons'
@@ -47,9 +51,81 @@ function formatSize(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
 }
 
+// 复用状态徽章
+function StatusBadge({ status, error }: { status: DocumentStatus; error: string }) {
+  if (status === 'processing' || status === 'pending') {
+    return (
+      <HStack spacing={2}>
+        <Spinner size="xs" color="blue.500" />
+        <Badge colorScheme={STATUS_COLOR[status]}>{STATUS_LABEL[status]}</Badge>
+      </HStack>
+    )
+  }
+  return (
+    <Tooltip label={error || ''} isDisabled={!error} placement="top">
+      <Badge colorScheme={STATUS_COLOR[status]}>{STATUS_LABEL[status]}</Badge>
+    </Tooltip>
+  )
+}
+
+// 移动端卡片
+function DocCard({ doc, onDelete, onRefresh }: { doc: Document; onDelete: (d: Document) => void; onRefresh: () => void }) {
+  return (
+    <Box
+      bg="white"
+      borderRadius="md"
+      border="1px"
+      borderColor="gray.200"
+      p={3}
+      mb={2}
+    >
+      <Flex justify="space-between" align="start" gap={2}>
+        <Box flex={1} minW={0}>
+          <Heading size="sm" noOfLines={1} mb={1}>
+            {doc.filename}
+          </Heading>
+          <HStack spacing={3} fontSize="xs" color="gray.500" flexWrap="wrap">
+            <Text>大小: {formatSize(doc.size_bytes)}</Text>
+            <Text>chunks: {doc.chunk_count}</Text>
+          </HStack>
+          <Box mt={2}>
+            <StatusBadge status={doc.status} error={doc.error} />
+          </Box>
+        </Box>
+        <VStack spacing={1}>
+          <Tooltip label="刷新状态" placement="left">
+            <IconButton
+              size="sm"
+              variant="ghost"
+              onClick={onRefresh}
+              aria-label="刷新"
+              icon={<RepeatIcon />}
+              minW="44px"
+              minH="44px"
+            />
+          </Tooltip>
+          <Tooltip label="删除文档" placement="left">
+            <IconButton
+              size="sm"
+              variant="ghost"
+              colorScheme="red"
+              onClick={() => onDelete(doc)}
+              aria-label="删除"
+              icon={<DeleteIcon />}
+              minW="44px"
+              minH="44px"
+            />
+          </Tooltip>
+        </VStack>
+      </Flex>
+    </Box>
+  )
+}
+
 export function DocumentList({ kbId, documents, onChange }: Props) {
   const toast = useToast()
   const pollRef = useRef<number | null>(null)
+  const isMobile = useBreakpointValue({ base: true, md: false })
 
   // 自动轮询: 任何 pending/processing 文档, 每 2s 刷一次
   useEffect(() => {
@@ -98,6 +174,28 @@ export function DocumentList({ kbId, documents, onChange }: Props) {
     )
   }
 
+  // 移动端: 卡片列表
+  if (isMobile) {
+    return (
+      <Box>
+        <VStack align="stretch" spacing={0}>
+          {documents.map((doc) => (
+            <DocCard
+              key={doc.id}
+              doc={doc}
+              onDelete={handleDelete}
+              onRefresh={onChange}
+            />
+          ))}
+        </VStack>
+        <Flex px={2} py={2} fontSize="xs" color="gray.400">
+          处理中 / 等待中的文档每 2 秒自动刷新状态
+        </Flex>
+      </Box>
+    )
+  }
+
+  // 桌面 / 平板: 表格
   return (
     <Box bg="white" borderRadius="md" border="1px" borderColor="gray.200" overflowX="auto">
       <Table size="sm" variant="simple">
@@ -124,24 +222,7 @@ export function DocumentList({ kbId, documents, onChange }: Props) {
                 </Text>
               </Td>
               <Td>
-                {doc.status === 'processing' || doc.status === 'pending' ? (
-                  <HStack spacing={2}>
-                    <Spinner size="xs" color="blue.500" />
-                    <Badge colorScheme={STATUS_COLOR[doc.status]}>
-                      {STATUS_LABEL[doc.status]}
-                    </Badge>
-                  </HStack>
-                ) : (
-                  <Tooltip
-                    label={doc.error || ''}
-                    isDisabled={!doc.error}
-                    placement="top"
-                  >
-                    <Badge colorScheme={STATUS_COLOR[doc.status]}>
-                      {STATUS_LABEL[doc.status]}
-                    </Badge>
-                  </Tooltip>
-                )}
+                <StatusBadge status={doc.status} error={doc.error} />
               </Td>
               <Td isNumeric>
                 <Text fontSize="sm" color="gray.600">

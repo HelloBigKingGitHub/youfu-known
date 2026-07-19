@@ -1,4 +1,5 @@
 // 左侧 KB 列表 + 新建/删除按钮
+// 响应式: 桌面直接渲染固定侧栏; 移动端由 App.tsx 包装成 Drawer
 import {
   AlertDialog,
   AlertDialogBody,
@@ -9,6 +10,12 @@ import {
   Box,
   Button,
   Divider,
+  Drawer,
+  DrawerBody,
+  DrawerCloseButton,
+  DrawerContent,
+  DrawerHeader,
+  DrawerOverlay,
   Flex,
   HStack,
   IconButton,
@@ -31,9 +38,17 @@ interface Props {
   kbs: KB[]
   loading: boolean
   onRefresh: () => void
+  isMobile: boolean
+  drawer: {
+    isOpen: boolean
+    onOpen: () => void
+    onClose: () => void
+    onToggle?: () => void
+  }
+  onNavigate: (kbId: string) => void
 }
 
-export function KnowledgeBaseSidebar({ kbs, loading, onRefresh }: Props) {
+export function KnowledgeBaseSidebar({ kbs, loading, onRefresh, isMobile, drawer, onNavigate }: Props) {
   const navigate = useNavigate()
   const { kbId: activeId } = useParams<{ kbId: string }>()
   const {
@@ -70,20 +85,29 @@ export function KnowledgeBaseSidebar({ kbs, loading, onRefresh }: Props) {
     }
   }
 
-  return (
+  const goKB = (id: string) => {
+    navigate(`/kbs/${id}`)
+    onNavigate(id)
+  }
+
+  // 侧栏内容 (桌面 / Drawer body 共用)
+  const body = (
     <Box
-      w="280px"
-      h="100vh"
+      w={{ base: '280px', md: '240px', lg: '280px' }}
+      h={{ base: 'auto', md: '100vh' }}
       bg="white"
-      borderRight="1px"
+      borderRight={{ base: 'none', md: '1px' }}
       borderColor="gray.200"
       p={4}
       overflowY="auto"
       flexShrink={0}
     >
-      <Text fontSize="lg" fontWeight="bold" mb={3} color="brand.700">
-        youfu-known
-      </Text>
+      {/* 标题只在桌面显示 (移动端 App.tsx 顶栏已经有) */}
+      {!isMobile && (
+        <Text fontSize="lg" fontWeight="bold" mb={3} color="brand.700">
+          youfu-known
+        </Text>
+      )}
       <NewKnowledgeBaseButton onCreated={onRefresh} />
 
       <Divider my={4} />
@@ -118,15 +142,17 @@ export function KnowledgeBaseSidebar({ kbs, loading, onRefresh }: Props) {
                   borderRadius="md"
                   _hover={{ bg: active ? 'brand.50' : 'gray.100' }}
                   pr={1}
+                  minH={{ base: '44px', md: 'auto' }}
                 >
                   <Box
                     flex={1}
                     px={3}
                     py={2}
                     cursor="pointer"
-                    onClick={() => navigate(`/kbs/${kb.id}`)}
+                    onClick={() => goKB(kb.id)}
                     borderLeft="3px solid"
                     borderLeftColor={active ? 'brand.500' : 'transparent'}
+                    minH={{ base: '44px', md: 'auto' }}
                   >
                     <Text
                       fontSize="sm"
@@ -151,6 +177,8 @@ export function KnowledgeBaseSidebar({ kbs, loading, onRefresh }: Props) {
                         setPendingDelete(kb)
                         onDeleteOpen()
                       }}
+                      minW={{ base: '44px', md: 'auto' }}
+                      minH={{ base: '44px', md: 'auto' }}
                     />
                   </Tooltip>
                 </HStack>
@@ -193,4 +221,25 @@ export function KnowledgeBaseSidebar({ kbs, loading, onRefresh }: Props) {
       </AlertDialog>
     </Box>
   )
+
+  if (isMobile) {
+    return (
+      <Drawer
+        isOpen={drawer.isOpen}
+        placement="left"
+        onClose={drawer.onClose}
+        size="xs"
+      >
+        <DrawerOverlay />
+        <DrawerContent>
+          <DrawerCloseButton />
+          <DrawerHeader borderBottomWidth="1px" py={3}>
+            知识库
+          </DrawerHeader>
+          <DrawerBody p={0}>{body}</DrawerBody>
+        </DrawerContent>
+      </Drawer>
+    )
+  }
+  return body
 }
