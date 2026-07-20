@@ -9,7 +9,11 @@ import type {
   UploadResult,
   ChatResponse,
   HealthInfo,
+  User,
+  LoginResponse,
 } from './types'
+
+export const USER_STORAGE_KEY = 'youfu-known:user'
 
 export class ApiError extends Error {
   public readonly code: number
@@ -30,14 +34,28 @@ interface Envelope<T> {
   detail?: unknown
 }
 
-async function request<T>(url: string, opts?: RequestInit): Promise<T> {
+async function request<T>(url: string, opts: RequestInit = {}): Promise<T> {
   let res: Response
   try {
-    res = await fetch(url, opts)
+    res = await fetch(url, {
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(opts.headers || {}),
+      },
+      ...opts,
+    })
   } catch (e) {
     // 网络层失败 (CORS / 连不上 / 跨域等)
     const msg = e instanceof Error ? e.message : '网络错误'
     throw new ApiError(-1, `无法连接到后端: ${msg}`)
+  }
+
+  // 401 统一处理: 清用户状态并跳登录 (login/me 校验接口由上层处理)
+  if (res.status === 401 && !url.includes('/auth/login') && !url.includes('/auth/me')) {
+    localStorage.removeItem(USER_STORAGE_KEY)
+    window.location.href = '/login'
+    throw new Error('not authenticated')
   }
 
   // 尝试解析 JSON, 容错非 JSON 错误
@@ -62,8 +80,28 @@ async function request<T>(url: string, opts?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  // 健康
+  // 健康 (公开)
   health: () => request<HealthInfo>('/api/health'),
+
+  // 认证
+  login: (username: string, password: string) =>
+    request<LoginResponse>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    }),
+
+  logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
+
+  me: () => request<User>('/api/auth/me'),
+
+  changePassword: (oldPassword: string, newPassword: string) =>
+    request<void>('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({
+        old_password: oldPassword,
+        new_password: newPassword,
+      }),
+    }),
 
   // KB
   listKBs: () => request<KB[]>('/api/kbs'),
@@ -112,6 +150,7 @@ export const api = {
     return new Promise<UploadResult>((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       xhr.open('POST', `/api/kbs/${kbId}/documents`)
+      xhr.withCredentials = true
       xhr.upload.onprogress = (ev) => {
         if (ev.lengthComputable && onProgress) {
           onProgress(ev.loaded, ev.total)

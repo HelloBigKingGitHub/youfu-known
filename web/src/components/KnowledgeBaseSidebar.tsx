@@ -30,9 +30,10 @@ import {
 import { DeleteIcon } from '@chakra-ui/icons'
 import { useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import type { KB } from '../types'
+import type { KB, User } from '../types'
 import { api, ApiError } from '../api'
 import { NewKnowledgeBaseButton } from './NewKnowledgeBaseButton'
+import { UserMenu } from './UserMenu'
 
 interface Props {
   kbs: KB[]
@@ -46,9 +47,11 @@ interface Props {
     onToggle?: () => void
   }
   onNavigate: (kbId: string) => void
+  user: User | null
+  onLogout: () => void
 }
 
-export function KnowledgeBaseSidebar({ kbs, loading, onRefresh, isMobile, drawer, onNavigate }: Props) {
+export function KnowledgeBaseSidebar({ kbs, loading, onRefresh, isMobile, drawer, onNavigate, user, onLogout }: Props) {
   const navigate = useNavigate()
   const { kbId: activeId } = useParams<{ kbId: string }>()
   const {
@@ -108,6 +111,7 @@ export function KnowledgeBaseSidebar({ kbs, loading, onRefresh, isMobile, drawer
           youfu-known
         </Text>
       )}
+      <UserMenu user={user} onLogout={onLogout} />
       <NewKnowledgeBaseButton onCreated={onRefresh} />
 
       <Divider my={4} />

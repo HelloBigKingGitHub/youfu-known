@@ -66,6 +66,22 @@ export interface HealthInfo {
   version: string
 }
 
+export interface User {
+  id: string
+  username: string
+  email: string | null
+  role: string
+  is_approved: boolean
+  created_at: string
+}
+
+export interface LoginResponse {
+  user: User
+  access_token: string
+  refresh_token: string
+  expires_at: number
+}
+
 // 前端内部用的问答历史项
 export interface ChatTurn {
   id: string

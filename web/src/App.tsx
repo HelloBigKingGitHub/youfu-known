@@ -1,6 +1,5 @@
 // App 根组件 - 响应式布局 (桌面 row / 手机 column)
-// 移动端: 顶栏 (汉堡 + 标题) + 抽屉式侧栏 + 主区域
-// 桌面: 固定侧栏 + 主区域 (原样)
+// 认证: /login 公开, 其余路由需登录
 import {
   Box,
   Flex,
@@ -12,15 +11,60 @@ import {
 import { HamburgerIcon } from '@chakra-ui/icons'
 import { useCallback, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
-import type { KB } from './types'
-import { api } from './api'
+import type { KB, User } from './types'
+import { api, USER_STORAGE_KEY } from './api'
 import { KnowledgeBaseSidebar } from './components/KnowledgeBaseSidebar'
 import { KBMainArea } from './components/KBMainArea'
 import { KBManageTab } from './components/KBManageTab'
 import { KBChatTab } from './components/KBChatTab'
 import { EmptyState } from './components/EmptyState'
+import { LoginPage } from './components/LoginPage'
+import { RequireAuth } from './components/RequireAuth'
+import { ChangePasswordPage } from './components/ChangePasswordPage'
 
 export function App() {
+  const [user, setUser] = useState<User | null>(null)
+
+  // 从 localStorage 恢复登录用户 (仅用于显示, token 在 HttpOnly cookie)
+  useEffect(() => {
+    const raw = localStorage.getItem(USER_STORAGE_KEY)
+    if (raw) {
+      try {
+        setUser(JSON.parse(raw))
+      } catch {
+        localStorage.removeItem(USER_STORAGE_KEY)
+      }
+    }
+  }, [])
+
+  const handleLogin = useCallback((u: User) => {
+    setUser(u)
+  }, [])
+
+  const handleLogout = useCallback(() => {
+    localStorage.removeItem(USER_STORAGE_KEY)
+    setUser(null)
+  }, [])
+
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage onLogin={handleLogin} />} />
+      <Route element={<RequireAuth />}>
+        <Route
+          path="/*"
+          element={<AuthenticatedApp user={user} onLogout={handleLogout} />}
+        />
+      </Route>
+    </Routes>
+  )
+}
+
+interface AuthenticatedAppProps {
+  user: User | null
+  onLogout: () => void
+}
+
+function AuthenticatedApp({ user, onLogout }: AuthenticatedAppProps) {
   const [kbs, setKBs] = useState<KB[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -47,9 +91,7 @@ export function App() {
   // 移动端选中 KB 后自动关闭 Drawer
   const handleNavigate = useCallback(
     (_kbId: string) => {
-      // 真正的跳转由 <Link> 触发, 这里只关 Drawer
       if (isMobile) drawer.onClose()
-      // 路由跳转用 navigate() 在 sidebar 里做
     },
     [isMobile, drawer],
   )
@@ -91,6 +133,8 @@ export function App() {
         isMobile={!!isMobile}
         drawer={drawer}
         onNavigate={handleNavigate}
+        user={user}
+        onLogout={onLogout}
       />
 
       {/* 主区域: 移动端可滚动 */}
@@ -102,6 +146,7 @@ export function App() {
             <Route path="manage" element={<KBManageTab />} />
             <Route path="chat" element={<KBChatTab />} />
           </Route>
+          <Route path="/change-password" element={<ChangePasswordPage />} />
           <Route path="*" element={<EmptyState />} />
         </Routes>
       </Box>
