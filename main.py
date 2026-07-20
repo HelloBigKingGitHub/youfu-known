@@ -137,6 +137,47 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.user_store = user_store
     app.state.auth_service = auth_service
 
+    # 4c. Data migrations. Idempotent; safe to run on every boot. They
+    # repair drift that older builds (or pre-auth DBs) left behind:
+    #   * KB / chat rows with NULL owner / user are stamped to the admin
+    #     so per-user visibility filters can resolve them.
+    #   * doc_count / chunk_count on knowledge_bases are recomputed
+    #     from the documents table to undo any counter drift.
+    # Order matters: ownership first, then counts (counts only depend
+    # on the documents table, not on ownership).
+    from app.auth.models import UserRole
+    from app.kb.storage import (
+        assign_orphan_chats_to_admin,
+        assign_orphan_kbs_to_admin,
+        recompute_kb_counts,
+    )
+
+    # Find the first admin by ``created_at`` order, not by configured
+    # username, so a DB that was bootstrapped with a different admin
+    # username still has its orphans assigned.
+    admin = next(
+        (u for u in user_store.list_users() if u.role == UserRole.ADMIN),
+        None,
+    )
+    if admin is not None:
+        kb_fixed = assign_orphan_kbs_to_admin(storage, admin.id)
+        chat_fixed = assign_orphan_chats_to_admin(storage, admin.id)
+        if kb_fixed or chat_fixed:
+            logger.info(
+                "migrated orphan rows to admin %s: kbs=%d, chat_turns=%d",
+                admin.id,
+                kb_fixed,
+                chat_fixed,
+            )
+    else:
+        logger.warning(
+            "no admin user present yet; skipping orphan KB / chat "
+            "assignment. They will be retried on the next boot."
+        )
+    counts_fixed = recompute_kb_counts(storage)
+    if counts_fixed:
+        logger.info("recomputed doc_count / chunk_count on %d KB row(s)", counts_fixed)
+
     logger.info(
         "Service graph initialised: project_root=%s", settings.project_root
     )

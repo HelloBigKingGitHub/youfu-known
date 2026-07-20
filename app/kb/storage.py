@@ -656,4 +656,90 @@ class SQLiteStorage:
         return None
 
 
-__all__ = ["SQLiteStorage"]
+# ---------------------------------------------------------------------------
+# Data migration helpers (idempotent; safe to call on every startup)
+# ---------------------------------------------------------------------------
+
+
+def recompute_kb_counts(storage: SQLiteStorage) -> int:
+    """Recompute ``doc_count`` and ``chunk_count`` from the documents table.
+
+    Counter drift can happen when ``adjust_kb_counts`` is called
+    with the wrong sign or on the wrong KB, or when the storage was
+    migrated from an older build that didn't track counts at all.
+    Running this on startup is the canonical "make the counters
+    honest again" pass.
+
+    Idempotent: rewriting a count to the same value is a no-op.
+    Returns the number of KB rows touched.
+    """
+    with storage._lock, storage._connect() as conn:  # type: ignore[attr-defined]
+        cur = conn.execute(
+            """
+            UPDATE knowledge_bases SET
+                doc_count = (
+                    SELECT COUNT(*) FROM documents
+                    WHERE documents.kb_id = knowledge_bases.id
+                ),
+                chunk_count = (
+                    SELECT COALESCE(SUM(chunk_count), 0) FROM documents
+                    WHERE documents.kb_id = knowledge_bases.id
+                )
+            """
+        )
+        conn.commit()
+        return int(cur.rowcount or 0)
+
+
+def assign_orphan_kbs_to_admin(
+    storage: SQLiteStorage, admin_user_id: str
+) -> int:
+    """Migrate KBs with ``owner_id IS NULL`` to ``admin_user_id``.
+
+    Knowledge bases created before the auth module shipped (or in
+    the data-layer spec before ownership wiring) end up with no
+    owner, which breaks the per-user visibility filter. Re-stamp
+    them to the bootstrap admin so the rest of the system can
+    resolve them.
+
+    Idempotent: rows that already have an owner are left alone.
+    Returns the number of KB rows updated.
+    """
+    with storage._lock, storage._connect() as conn:  # type: ignore[attr-defined]
+        cur = conn.execute(
+            "UPDATE knowledge_bases SET owner_id = ? "
+            "WHERE owner_id IS NULL",
+            (admin_user_id,),
+        )
+        conn.commit()
+        return int(cur.rowcount or 0)
+
+
+def assign_orphan_chats_to_admin(
+    storage: SQLiteStorage, admin_user_id: str
+) -> int:
+    """Migrate chat_turns with ``user_id IS NULL`` to ``admin_user_id``.
+
+    Same rationale as :func:`assign_orphan_kbs_to_admin`: turns
+    captured before auth shipped (or before the chat layer wired
+    the authenticated user through) have no user stamp, which
+    blocks the per-user chat-history view.
+
+    Idempotent. Returns the number of chat_turn rows updated.
+    """
+    with storage._lock, storage._connect() as conn:  # type: ignore[attr-defined]
+        cur = conn.execute(
+            "UPDATE chat_turns SET user_id = ? "
+            "WHERE user_id IS NULL",
+            (admin_user_id,),
+        )
+        conn.commit()
+        return int(cur.rowcount or 0)
+
+
+__all__ = [
+    "SQLiteStorage",
+    "recompute_kb_counts",
+    "assign_orphan_kbs_to_admin",
+    "assign_orphan_chats_to_admin",
+]

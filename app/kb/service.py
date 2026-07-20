@@ -270,6 +270,14 @@ class KBService:
             )
             conn.commit()
 
+        # Bump doc_count exactly once, at upload time. Doing it here (rather
+        # than at ingest success) means a re-ingest of the same doc cannot
+        # double-count, and the invariant ``doc_count == # of documents in
+        # kb`` holds without tracking ``was_ready``. The chunk count is
+        # still adjusted by the ingest pipeline so failed parses don't
+        # inflate it.
+        self._storage.adjust_kb_counts(kb_id, doc_delta=1, chunk_delta=0)
+
         return UploadedFile(
             doc_id=preview_doc.id,
             filename=filename,
@@ -288,10 +296,13 @@ class KBService:
         2. chunk (RecursiveChunker, sliding overlap)
         3. embed (EmbeddingClient, batch <= 25)
         4. upsert (Chroma collection)
-        5. mark ready and bump KB counters
+        5. mark ready and bump chunk_count by the delta
 
         On any failure: ``status=failed``, ``error=<message>``,
         KB counters stay untouched. Other documents are unaffected.
+
+        Note: ``doc_count`` is incremented at upload time, not here, so
+        re-ingest of an already-counted doc cannot double-count.
         """
         doc = self._storage.get_document(doc_id)
         if doc is None or doc.kb_id != kb_id:
@@ -299,11 +310,9 @@ class KBService:
                 f"document {doc_id} not found in kb {kb_id}"
             )
 
-        # Capture the previous status BEFORE we mark PROCESSING so we
-        # can decide whether this is a first ingest (doc_count++) or a
-        # re-ingest (no doc_count change). Without this guard, repeated
-        # ingest calls would inflate ``doc_count`` indefinitely.
-        was_ready = doc.status == DocumentStatus.READY
+        # Capture the previous chunk_count BEFORE we mark PROCESSING so
+        # a re-ingest that yields a different chunk_total can adjust the
+        # counter by the delta (not the absolute new total).
         prev_chunk_count = int(doc.chunk_count or 0)
 
         self._storage.update_document_status(
@@ -402,11 +411,10 @@ class KBService:
             )
             raise
 
-        # doc_count: only bump on the *first* successful ingest. Re-ingest
-        # of an already-READY doc must not double-count.
-        if not was_ready:
-            self._storage.adjust_kb_counts(kb_id, doc_delta=1, chunk_delta=0)
-
+        # ``doc_count`` is bumped at upload time, so re-ingest of an
+        # already-counted doc is a no-op for that counter. The
+        # ``chunk_count`` delta above handles re-ingest of a doc whose
+        # chunk count changed between runs.
         refreshed = self._storage.get_document(doc_id)
         assert refreshed is not None
         return refreshed
