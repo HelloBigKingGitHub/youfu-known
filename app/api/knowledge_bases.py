@@ -1,18 +1,23 @@
 """Knowledge-base CRUD endpoints (``/api/kbs``).
 
-All domain errors (``KBNotFoundError``, ``ValueError``) are allowed to
-propagate to the global exception handlers registered in ``main.py``
-so the unified ``{code, message}`` envelope is used everywhere.
+All endpoints require an authenticated user. Reads filter by ownership
+(admin sees all; member sees own + public). Writes require the caller
+to be the owner or an admin.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api import ok
 from app.api.request_models import KnowledgeBaseCreate, KnowledgeBaseUpdate
+from app.auth.deps import get_current_user
+from app.auth.models import User, UserRole
 from app.deps import get_kb_service
-from app.kb.service import KBService
+from app.kb.service import (
+    KBNotFoundError,
+    KBService,
+)
 
 router = APIRouter(prefix="/api/kbs", tags=["knowledge_bases"])
 
@@ -28,6 +33,8 @@ def _kb_payload(kb) -> dict:
         "id": kb.id,
         "name": kb.name,
         "description": kb.description,
+        "owner_id": getattr(kb, "owner_id", None),
+        "is_public": bool(getattr(kb, "is_public", False)),
         "created_at": kb.created_at.isoformat() if kb.created_at else None,
         "doc_count": kb.doc_count,
         "chunk_count": kb.chunk_count,
@@ -59,36 +66,59 @@ def _doc_payload(doc) -> dict:
 
 
 @router.get("")
-async def list_kbs(svc: KBService = Depends(get_kb_service)) -> dict:
-    """List all knowledge bases, newest first."""
-    kbs = svc.list_kbs()
+async def list_kbs(
+    user: User = Depends(get_current_user),
+    svc: KBService = Depends(get_kb_service),
+) -> dict:
+    """List knowledge bases visible to the current user."""
+    is_admin = user.role == UserRole.ADMIN
+    kbs = svc.list_kbs_for_user(user.id, is_admin=is_admin)
+    # KBService.list_kbs returns models that include owner_id / is_public
+    # only if SQLiteStorage was queried for them; in our schema they are
+    # stored as separate columns and surfaced via the UserStore helper.
+    # Use kb_owner_and_visibility to enrich the payload.
     return ok([_kb_payload(kb) for kb in kbs])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_kb(
     body: KnowledgeBaseCreate,
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
-    """Create a new knowledge base."""
-    kb = svc.create_kb(name=body.name, description=body.description or "")
+    """Create a new knowledge base owned by the current user."""
+    kb = svc.create_kb(
+        name=body.name,
+        description=body.description or "",
+        owner_id=user.id,
+        is_public=False,
+    )
     return ok(_kb_payload(kb))
 
 
 @router.get("/{kb_id}")
 async def kb_detail(
     kb_id: str,
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
-    """Return one KB along with its document list and aggregate counts.
-
-    ``KBNotFoundError`` is allowed to bubble up -- the global handler in
-    ``main.py`` maps it to ``{code:404, message:...}``.
-    """
-    detail = svc.get_kb_detail(kb_id)
+    """Return one KB along with its document list (if visible to caller)."""
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_read_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
+    try:
+        detail = svc.get_kb_detail(kb_id)
+    except KBNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    # Enrich the KB payload with owner/visibility columns.
+    enriched = _kb_payload(detail.kb)
+    info = svc.kb_owner_and_visibility(kb_id)
+    if info is not None:
+        enriched["owner_id"] = info[0]
+        enriched["is_public"] = info[1]
     return ok(
         {
-            "kb": _kb_payload(detail.kb),
+            "kb": enriched,
             "documents": [_doc_payload(d) for d in detail.documents],
         }
     )
@@ -98,22 +128,43 @@ async def kb_detail(
 async def rename_kb(
     kb_id: str,
     body: KnowledgeBaseUpdate,
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
-    """Rename and/or update the description of a KB."""
-    kb = svc.rename_kb(
-        kb_id,
-        name=body.name,
-        description=body.description,
-    )
+    """Rename / update description / toggle ``is_public``.
+
+    Only the owner or an admin can mutate a KB.
+    """
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_write_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
+    is_public = getattr(body, "is_public", None)
+    try:
+        kb = svc.rename_kb(
+            kb_id,
+            name=body.name,
+            description=body.description,
+            is_public=is_public,
+        )
+    except KBNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ok(_kb_payload(kb))
 
 
 @router.delete("/{kb_id}")
 async def delete_kb(
     kb_id: str,
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
-    """Delete a KB (cascades to documents + Chroma collection)."""
-    svc.delete_kb(kb_id)
+    """Delete a KB (owner or admin only)."""
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_write_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
+    try:
+        svc.delete_kb(kb_id)
+    except KBNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ok({"deleted": kb_id})

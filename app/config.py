@@ -5,8 +5,15 @@ Reads ``config.yaml`` (committed) for structural config and ``.env``
 ``config.yaml``.
 
 Resolution rules:
-- chat.api_key      <- MINIMAX_API_KEY
-- embedding.api_key <- DASHSCOPE_API_KEY
+- chat.api_key              <- MINIMAX_API_KEY
+- embedding.api_key         <- DASHSCOPE_API_KEY
+- auth.jwt_secret           <- YOUFU_JWT_SECRET
+- auth.admin_username       <- YOUFU_ADMIN_USERNAME
+- auth.admin_password       <- YOUFU_ADMIN_PASSWORD
+- auth.cookie_secure        <- YOUFU_COOKIE_SECURE
+- auth.session_hours        <- YOUFU_SESSION_HOURS
+- auth.refresh_days         <- YOUFU_REFRESH_DAYS
+- auth.bcrypt_rounds        <- YOUFU_BCRYPT_ROUNDS
 
 ``get_settings()`` returns a process-wide singleton ``Settings`` instance.
 """
@@ -14,6 +21,7 @@ Resolution rules:
 from __future__ import annotations
 
 import os
+import secrets
 from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
@@ -83,6 +91,25 @@ class UploadConfig(BaseModel):
     )
 
 
+class AuthConfig(BaseModel):
+    """Authentication / session configuration.
+
+    Sensitive values default to ``None`` so ``Settings`` validation
+    passes even when ``.env`` hasn't been populated yet. ``load_settings``
+    fills ``jwt_secret`` with an ephemeral random value (with a loud
+    warning at boot if it was not explicitly provided via env), and the
+    lifespan logs again if the admin username / password are missing.
+    """
+
+    jwt_secret: Optional[str] = None
+    admin_username: Optional[str] = "admin"
+    admin_password: Optional[str] = None
+    cookie_secure: bool = True
+    session_hours: int = 24
+    refresh_days: int = 30
+    bcrypt_rounds: int = 12
+
+
 # ---------------------------------------------------------------------------
 # Top-level
 # ---------------------------------------------------------------------------
@@ -98,6 +125,7 @@ class Settings(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     rag: RagConfig = Field(default_factory=RagConfig)
     upload: UploadConfig = Field(default_factory=UploadConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
 
     # ------------------------------------------------------------------
     # Convenience accessors (always absolute paths)
@@ -195,6 +223,38 @@ def load_settings(
     if (env_val := os.getenv("DASHSCOPE_API_KEY")):
         raw_emb["api_key"] = env_val
     raw["embedding"] = raw_emb
+
+    # Auth env overrides (JWT secret, admin bootstrap, cookie flags).
+    raw_auth = dict(raw.get("auth") or {})
+    if (env_val := os.getenv("YOUFU_JWT_SECRET")):
+        raw_auth["jwt_secret"] = env_val
+    elif not raw_auth.get("jwt_secret"):
+        # Stable per-installation dev fallback so first-run / tests work
+        # without an .env entry. Production deployments MUST override via
+        # YOUFU_JWT_SECRET (a warning is logged at startup).
+        raw_auth["jwt_secret"] = secrets.token_hex(32)
+    if (env_val := os.getenv("YOUFU_ADMIN_USERNAME")):
+        raw_auth["admin_username"] = env_val
+    if (env_val := os.getenv("YOUFU_ADMIN_PASSWORD")):
+        raw_auth["admin_password"] = env_val
+    if (env_val := os.getenv("YOUFU_COOKIE_SECURE")):
+        raw_auth["cookie_secure"] = env_val.lower() not in {"0", "false", "no"}
+    if (env_val := os.getenv("YOUFU_SESSION_HOURS")):
+        try:
+            raw_auth["session_hours"] = int(env_val)
+        except ValueError:
+            pass
+    if (env_val := os.getenv("YOUFU_REFRESH_DAYS")):
+        try:
+            raw_auth["refresh_days"] = int(env_val)
+        except ValueError:
+            pass
+    if (env_val := os.getenv("YOUFU_BCRYPT_ROUNDS")):
+        try:
+            raw_auth["bcrypt_rounds"] = int(env_val)
+        except ValueError:
+            pass
+    raw["auth"] = raw_auth
 
     return Settings(project_root=project_root, **raw)
 

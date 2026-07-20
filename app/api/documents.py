@@ -24,6 +24,8 @@ from fastapi import (
 )
 
 from app.api import ok
+from app.auth.deps import get_current_user
+from app.auth.models import User, UserRole
 from app.deps import get_kb_service
 from app.jobs.ingest import kick_ingest
 from app.kb.models import ChunkMeta
@@ -138,6 +140,7 @@ async def upload_documents(
     kb_id: str,
     request: Request,
     files: List[UploadFile] = File(..., description="One or more files to upload"),
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Upload one or more files into a KB and kick off background ingest.
@@ -147,7 +150,13 @@ async def upload_documents(
     The ingest pipeline (load -> chunk -> embed -> upsert) is then
     scheduled as an :func:`asyncio.create_task` and the HTTP response
     returns immediately. Clients poll ``/{doc_id}/status`` for progress.
+
+    Only the KB's owner or an admin can upload.
     """
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_write_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
+
     if not files:
         raise HTTPException(status_code=400, detail="no files provided")
 
@@ -165,6 +174,7 @@ async def upload_documents(
                 filename=filename,
                 ext=ext,
                 content=content,
+                owner_id=user.id,
             )
         except KBNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -187,9 +197,13 @@ async def upload_documents(
 @router.get("")
 async def list_documents(
     kb_id: str,
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
-    """List all documents belonging to ``kb_id``."""
+    """List all documents belonging to ``kb_id`` (read access required)."""
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_read_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
     try:
         docs = svc.list_documents(kb_id)
     except KBNotFoundError as exc:
@@ -201,9 +215,13 @@ async def list_documents(
 async def document_detail(
     kb_id: str,
     doc_id: str,
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Return the metadata + processing status of one document."""
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_read_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
     try:
         doc = svc.get_document(kb_id, doc_id)
     except DocumentNotFoundError as exc:
@@ -217,9 +235,13 @@ async def document_detail(
 async def document_status(
     kb_id: str,
     doc_id: str,
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Lightweight status poll used by the upload UX."""
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_read_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
     try:
         doc = svc.get_document(kb_id, doc_id)
     except DocumentNotFoundError as exc:
@@ -240,9 +262,13 @@ async def document_status(
 async def delete_document(
     kb_id: str,
     doc_id: str,
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
-    """Remove a document and its associated Chroma chunks."""
+    """Remove a document and its associated Chroma chunks (write access)."""
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_write_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
     try:
         ok_deleted = svc.delete_document(kb_id, doc_id)
     except DocumentNotFoundError as exc:
@@ -261,6 +287,7 @@ async def list_document_chunks(
     request: Request,
     limit: int = 100,
     offset: int = 0,
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Return chunk metadata for a document, ordered by ``chunk_idx``.
@@ -268,6 +295,9 @@ async def list_document_chunks(
     Debug / re-indexing helper. ``limit`` defaults to 100; ``offset``
     is a plain integer page offset (not a cursor).
     """
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_read_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
     # Validate that the document belongs to ``kb_id`` so callers can't
     # probe another KB's chunks by guessing doc_ids.
     try:
@@ -288,9 +318,13 @@ async def get_document_chunk(
     doc_id: str,
     chunk_id: str,
     request: Request,
+    user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Return a single chunk row (including its full ``content``)."""
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_read_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
     try:
         svc.get_document(kb_id, doc_id)
     except (DocumentNotFoundError, KBNotFoundError) as exc:

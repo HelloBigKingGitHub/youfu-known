@@ -17,17 +17,22 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api import ok
-from app.deps import get_retriever
+from app.auth.deps import get_current_user
+from app.auth.models import User, UserRole
+from app.auth.storage import UserStore
+from app.deps import get_retriever, get_kb_service
 from app.kb.models import (
     ChatRequest,
     ChatResponse,
     ChatTurn,
     Citation,
 )
+from app.kb.service import KBService
 from app.rag.retriever import Retriever
 
 router = APIRouter(prefix="/api/kbs/{kb_id}", tags=["chat"])
@@ -83,6 +88,7 @@ def _persist_turn(
     result_or_none,
     error: str,
     latency_ms: int,
+    user_id: Optional[str] = None,
 ) -> None:
     """Write a chat_turns row mirroring the latest ``/chat`` outcome.
 
@@ -113,6 +119,21 @@ def _persist_turn(
             latency_ms=int(latency_ms or 0),
         )
         storage.save_chat_turn(turn)
+        # Tag the turn with the user who asked so the chat history
+        # endpoint can attribute rows correctly. Best-effort: ignore
+        # failures so the chat response itself still goes out.
+        if user_id:
+            try:
+                store = UserStore(
+                    request.app.state.settings, db_path=storage.db_path
+                )
+                store.set_chat_turn_user(turn.id, user_id)
+            except Exception:  # noqa: BLE001
+                import logging
+
+                logging.getLogger(__name__).exception(
+                    "Failed to tag chat turn %s with user", turn.id
+                )
     except Exception:  # noqa: BLE001 -- persistence must not break chat
         import logging
 
@@ -131,7 +152,9 @@ async def chat(
     kb_id: str,
     body: ChatRequest,
     request: Request,
+    user: User = Depends(get_current_user),
     retriever: Retriever = Depends(get_retriever),
+    kb_service: KBService = Depends(get_kb_service),
 ) -> dict:
     """Answer a question against the KB.
 
@@ -139,6 +162,10 @@ async def chat(
     JSON envelope with the full ``answer`` plus the citations that
     backed it. See module docstring for the streaming TODO.
     """
+    is_admin = user.role == UserRole.ADMIN
+    if not kb_service.user_can_read_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
+
     # Spec allows ``stream=true``; we refuse it politely for now so
     # callers don't get a default binary stream they aren't expecting.
     if body.stream:
@@ -169,6 +196,7 @@ async def chat(
             result_or_none=None,
             error=str(exc),
             latency_ms=latency,
+            user_id=user.id,
         )
         raise
 
@@ -180,6 +208,7 @@ async def chat(
         result_or_none=result,
         error="",
         latency_ms=latency,
+        user_id=user.id,
     )
 
     response = ChatResponse(

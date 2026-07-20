@@ -200,8 +200,9 @@ def _create_kb_and_doc(client: TestClient, sample_txt, *, name: str):
 
 
 def test_list_chunks_endpoint(
-    client: TestClient, mock_embedder, sample_txt
+    admin_client: TestClient, mock_embedder, sample_txt
 ):
+    client = admin_client
     kb_id, doc_id = _create_kb_and_doc(client, sample_txt, name="chunks-list-api")
     r = client.get(f"/api/kbs/{kb_id}/documents/{doc_id}/chunks")
     assert r.status_code == 200
@@ -214,8 +215,9 @@ def test_list_chunks_endpoint(
 
 
 def test_get_single_chunk_endpoint(
-    client: TestClient, mock_embedder, sample_txt
+    admin_client: TestClient, mock_embedder, sample_txt
 ):
+    client = admin_client
     kb_id, doc_id = _create_kb_and_doc(client, sample_txt, name="chunks-detail-api")
     r = client.get(f"/api/kbs/{kb_id}/documents/{doc_id}/chunks")
     assert r.status_code == 200
@@ -228,7 +230,8 @@ def test_get_single_chunk_endpoint(
     assert body["content"]
 
 
-def test_chunks_endpoint_404_on_unknown_doc(client: TestClient):
+def test_chunks_endpoint_404_on_unknown_doc(admin_client: TestClient):
+    client = admin_client
     kb_id = client.post(
         "/api/kbs", json={"name": "chunks-404-unique"}
     ).json()["data"]["id"]
@@ -237,9 +240,10 @@ def test_chunks_endpoint_404_on_unknown_doc(client: TestClient):
 
 
 def test_chunks_endpoint_404_on_wrong_kb(
-    client: TestClient, mock_embedder, sample_txt
+    admin_client: TestClient, mock_embedder, sample_txt
 ):
     """A doc_id from one KB must not be reachable via another KB."""
+    client = admin_client
     kb_a, doc_a = _create_kb_and_doc(client, sample_txt, name="chunks-wrong-kb-a")
     kb_b = client.post(
         "/api/kbs", json={"name": "chunks-wrong-kb-b"}
@@ -249,9 +253,10 @@ def test_chunks_endpoint_404_on_wrong_kb(
 
 
 def test_chat_response_includes_chunk_id(
-    client: TestClient, mock_retriever, mock_embedder
+    admin_client: TestClient, mock_retriever, mock_embedder
 ):
     """End-to-end: chat response carries chunk_id on each citation."""
+    client = admin_client
     kb_id = client.post(
         "/api/kbs", json={"name": "chunk-id-cite"}
     ).json()["data"]["id"]

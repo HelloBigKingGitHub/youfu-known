@@ -23,6 +23,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
+from app.api import admin as admin_router
+from app.api import auth as auth_router
 from app.api import chat as chat_router
 from app.api import chat_history as chat_history_router
 from app.api import documents as documents_router
@@ -30,7 +32,21 @@ from app.api import health as health_router
 from app.api import knowledge_bases as knowledge_bases_router
 from app.api import err as api_err
 from app.api import ok as api_ok
-from app.config import Settings, get_settings
+from app.auth.service import AuthService
+from app.auth.storage import UserStore
+import app.config as app_config
+from app.config import Settings
+
+
+def _settings() -> Settings:
+    """Look up the settings factory via the module so test-time patches stick.
+
+    The lifespan captures ``get_settings`` once at import time; tests that
+    reload ``app.config`` and monkey-patch its attribute never see the
+    patched value. Resolving through ``app_config.get_settings`` each call
+    keeps the lookup dynamic so the lifespan matches the fixture's view.
+    """
+    return app_config.get_settings()
 from app.jobs.ingest import recover_interrupted
 from app.kb.service import (
     DocumentNotFoundError,
@@ -57,7 +73,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     during construction (they call ``init()`` defensively, so order is
     not catastrophic, but we keep it explicit for clarity).
     """
-    settings: Settings = get_settings()
+    settings: Settings = _settings()
 
     # 1. SQLite metadata store (idempotent).
     from app.kb.storage import SQLiteStorage
@@ -107,6 +123,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.embedder = embedder
     app.state.kb_service = kb_service
     app.state.retriever = retriever
+
+    # 4b. Auth: UserStore + AuthService, bootstrap admin if users empty.
+    user_store = UserStore(settings, db_path=storage.db_path)
+    auth_service = AuthService(store=user_store, settings=settings)
+    bootstrap = auth_service.bootstrap_admin_if_empty()
+    if bootstrap is not None:
+        logger.info(
+            "bootstrapped admin user '%s' (id=%s); rotate the password ASAP",
+            bootstrap.username,
+            bootstrap.id,
+        )
+    app.state.user_store = user_store
+    app.state.auth_service = auth_service
 
     logger.info(
         "Service graph initialised: project_root=%s", settings.project_root
@@ -201,6 +230,8 @@ def _register_routers(app: FastAPI) -> None:
     we group them by family in the OpenAPI tags for readability.
     """
     app.include_router(health_router.router)
+    app.include_router(auth_router.router)
+    app.include_router(admin_router.router)
     app.include_router(knowledge_bases_router.router)
     app.include_router(documents_router.router)
     app.include_router(chat_router.router)
@@ -296,6 +327,94 @@ def _register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=400,
             content=api_err(400, str(exc)),
+        )
+
+    # Auth-domain errors (mostly for the service layer's signals that
+    # haven't already been translated to HTTPException by the routers).
+    from fastapi import HTTPException
+
+    from app.auth.security import TokenError
+
+    @app.exception_handler(HTTPException)
+    async def _http_exception_handler(
+        request: Request, exc: HTTPException
+    ) -> JSONResponse:
+        """Translate FastAPI's ``{"detail": "..."}`` to our envelope.
+
+        Keeps a 5xx-shape with ``detail`` only when the status is 5xx.
+        """
+        detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+        body = api_err(int(exc.status_code), detail)
+        if 500 <= int(exc.status_code) < 600:
+            body["detail"] = detail
+        # Preserve WWW-Authenticate / set-cookie etc. when set.
+        headers = getattr(exc, "headers", None)
+        return JSONResponse(
+            status_code=int(exc.status_code),
+            content=body,
+            headers=headers,
+        )
+    from app.auth.service import (
+        CannotDemoteSelfError,
+        InvalidCredentialsError,
+        UserInactiveError,
+        UserNotApprovedError,
+        UserNotFoundError,
+        UsernameTakenError,
+    )
+
+    @app.exception_handler(TokenError)
+    async def _token_error_handler(request: Request, exc: TokenError) -> JSONResponse:
+        return JSONResponse(
+            status_code=401, content=api_err(401, str(exc))
+        )
+
+    @app.exception_handler(InvalidCredentialsError)
+    async def _invalid_creds_handler(
+        request: Request, exc: InvalidCredentialsError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=401, content=api_err(401, str(exc))
+        )
+
+    @app.exception_handler(UserNotApprovedError)
+    async def _unapproved_handler(
+        request: Request, exc: UserNotApprovedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=403, content=api_err(403, str(exc))
+        )
+
+    @app.exception_handler(UserInactiveError)
+    async def _inactive_handler(
+        request: Request, exc: UserInactiveError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=403, content=api_err(403, str(exc))
+        )
+
+    @app.exception_handler(UserNotFoundError)
+    async def _user_not_found_handler(
+        request: Request, exc: UserNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=404, content=api_err(404, str(exc))
+        )
+
+    @app.exception_handler(UsernameTakenError)
+    async def _username_taken_handler(
+        request: Request, exc: UsernameTakenError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409, content=api_err(409, str(exc))
+        )
+
+    @app.exception_handler(CannotDemoteSelfError)
+    async def _cannot_demote_handler(
+        request: Request, exc: CannotDemoteSelfError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=400, content=api_err(400, str(exc))
         )
 
     @app.exception_handler(Exception)

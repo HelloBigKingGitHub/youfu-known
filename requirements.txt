@@ -12,3 +12,5 @@ beautifulsoup4==4.14.2
 lxml==6.0.2
 python-dotenv==1.1.1
 PyYAML==6.0.3
+bcrypt==5.0.0
+PyJWT==2.9.0

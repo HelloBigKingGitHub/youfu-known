@@ -58,3 +58,18 @@ rag:
 upload:
   max_file_size_mb: 50
   allowed_extensions: [".pdf", ".docx", ".doc", ".md", ".txt", ".html", ".htm"]
+
+# ---------------------------------------------------------------------------
+# Auth / RBAC: see openspec/tasks/auth-rbac.md
+# Credentials are read from .env (overrides below). When YOUFU_JWT_SECRET
+# is unset, the app generates an ephemeral secret at boot — fine for dev,
+# not for production (sessions invalidate on restart).
+# ---------------------------------------------------------------------------
+auth:
+  jwt_secret: null            # YOUFU_JWT_SECRET
+  admin_username: admin       # YOUFU_ADMIN_USERNAME
+  admin_password: null        # YOUFU_ADMIN_PASSWORD (required to bootstrap)
+  cookie_secure: true         # YOUFU_COOKIE_SECURE (set false for http:// dev)
+  session_hours: 24           # YOUFU_SESSION_HOURS (access token TTL)
+  refresh_days: 30            # YOUFU_REFRESH_DAYS (refresh token TTL)
+  bcrypt_rounds: 12           # YOUFU_BCRYPT_ROUNDS (cost factor)

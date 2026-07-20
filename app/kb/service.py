@@ -74,19 +74,70 @@ class KBService:
     # Knowledge-base CRUD
     # ------------------------------------------------------------------
 
-    def create_kb(self, name: str, description: str = "") -> KnowledgeBase:
+    def create_kb(
+        self,
+        name: str,
+        description: str = "",
+        owner_id: Optional[str] = None,
+        is_public: bool = False,
+    ) -> KnowledgeBase:
         name = (name or "").strip()
         if not name:
             raise ValueError("name must be non-empty")
         kb = self._storage.create_kb(name=name, description=description or "")
+        # Stamp ownership + visibility via the user store (owns the auth
+        # schema migrations). Doing it through SQLiteStorage would work
+        # too, but keeping it here avoids a circular import.
+        self._stamp_kb_ownership(kb.id, owner_id, is_public)
         # Pre-create the empty Chroma collection so upload later is fast.
         self._vectorstore.get_or_create(kb.id, dim=self._embedder.dim)
         # Pre-create the per-KB upload directory so cleanup is straightforward.
         self._upload_dir_for_kb(kb.id).mkdir(parents=True, exist_ok=True)
-        return kb
+        # Re-read so the returned KB carries the owner / public flags.
+        refreshed = self._storage.get_kb(kb.id)
+        return refreshed or kb
+
+    def _stamp_kb_ownership(
+        self, kb_id: str, owner_id: Optional[str], is_public: bool
+    ) -> None:
+        """Write owner_id + is_public straight to the SQLite row.
+
+        Uses the storage's own connection (no extra UserStore instance)
+        to keep the path zero-allocation in the hot create path.
+        """
+        with self._storage._connect() as conn:  # type: ignore[attr-defined]
+            conn.execute(
+                "UPDATE knowledge_bases SET owner_id = ?, is_public = ? WHERE id = ?",
+                (owner_id, 1 if is_public else 0, kb_id),
+            )
+            conn.commit()
 
     def list_kbs(self) -> List[KnowledgeBase]:
         return self._storage.list_kbs()
+
+    def list_kbs_for_user(
+        self, user_id: str, is_admin: bool
+    ) -> List[KnowledgeBase]:
+        """Return KBs the user is allowed to see.
+
+        Admins see all; members see their own KBs plus any
+        ``is_public=True`` KB.
+        """
+        all_kbs = self._storage.list_kbs()
+        if is_admin:
+            return all_kbs
+        visible_ids = self._kb_visibility_filter(user_id)
+        return [kb for kb in all_kbs if kb.id in visible_ids]
+
+    def _kb_visibility_filter(self, user_id: str) -> set:
+        """``set[kb_id]`` of KBs the user is allowed to see."""
+        with self._storage._connect() as conn:  # type: ignore[attr-defined]
+            rows = conn.execute(
+                "SELECT id FROM knowledge_bases "
+                "WHERE owner_id = ? OR is_public = 1",
+                (user_id,),
+            ).fetchall()
+            return {r["id"] for r in rows}
 
     def get_kb_detail(self, kb_id: str) -> KBDetail:
         kb = self._storage.get_kb(kb_id)
@@ -95,15 +146,59 @@ class KBService:
         docs = self._storage.list_documents(kb_id)
         return KBDetail(kb=kb, documents=docs)
 
+    def kb_owner_and_visibility(
+        self, kb_id: str
+    ) -> Optional[tuple]:
+        """Return ``(owner_id, is_public)`` for ``kb_id`` (or None)."""
+        with self._storage._connect() as conn:  # type: ignore[attr-defined]
+            row = conn.execute(
+                "SELECT owner_id, is_public FROM knowledge_bases WHERE id = ?",
+                (kb_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return (row["owner_id"], bool(row["is_public"]))
+
+    def user_can_read_kb(
+        self, kb_id: str, user_id: str, is_admin: bool
+    ) -> bool:
+        if is_admin:
+            return True
+        info = self.kb_owner_and_visibility(kb_id)
+        if info is None:
+            return False
+        owner_id, is_public = info
+        return is_public or owner_id == user_id
+
+    def user_can_write_kb(
+        self, kb_id: str, user_id: str, is_admin: bool
+    ) -> bool:
+        if is_admin:
+            return True
+        info = self.kb_owner_and_visibility(kb_id)
+        if info is None:
+            return False
+        owner_id, _ = info
+        return owner_id == user_id
+
     def rename_kb(
         self,
         kb_id: str,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        is_public: Optional[bool] = None,
     ) -> KnowledgeBase:
         kb = self._storage.update_kb(kb_id, name=name, description=description)
         if kb is None:
             raise KBNotFoundError(f"knowledge base not found: {kb_id}")
+        if is_public is not None:
+            with self._storage._connect() as conn:  # type: ignore[attr-defined]
+                conn.execute(
+                    "UPDATE knowledge_bases SET is_public = ? WHERE id = ?",
+                    (1 if is_public else 0, kb_id),
+                )
+                conn.commit()
+            kb = self._storage.get_kb(kb_id) or kb
         return kb
 
     def delete_kb(self, kb_id: str) -> bool:
@@ -132,6 +227,7 @@ class KBService:
         filename: str,
         ext: str,
         content: bytes,
+        owner_id: Optional[str] = None,
     ) -> UploadedFile:
         """Persist an uploaded file and register it as ``pending``.
 
@@ -166,11 +262,11 @@ class KBService:
         storage_path.parent.mkdir(parents=True, exist_ok=True)
         storage_path.write_bytes(content)
 
-        # Patch the storage_path column (status stays pending)
+        # Patch the storage_path + owner_id columns (status stays pending).
         with self._storage._connect() as conn:  # type: ignore[attr-defined]
             conn.execute(
-                "UPDATE documents SET storage_path = ? WHERE id = ?",
-                (str(storage_path), preview_doc.id),
+                "UPDATE documents SET storage_path = ?, owner_id = ? WHERE id = ?",
+                (str(storage_path), owner_id, preview_doc.id),
             )
             conn.commit()
 
@@ -202,6 +298,13 @@ class KBService:
             raise DocumentNotFoundError(
                 f"document {doc_id} not found in kb {kb_id}"
             )
+
+        # Capture the previous status BEFORE we mark PROCESSING so we
+        # can decide whether this is a first ingest (doc_count++) or a
+        # re-ingest (no doc_count change). Without this guard, repeated
+        # ingest calls would inflate ``doc_count`` indefinitely.
+        was_ready = doc.status == DocumentStatus.READY
+        prev_chunk_count = int(doc.chunk_count or 0)
 
         self._storage.update_document_status(
             doc_id, DocumentStatus.PROCESSING, error=""
@@ -285,7 +388,12 @@ class KBService:
                 error="",
                 chunk_count=chunk_total,
             )
-            self._storage.adjust_kb_counts(kb_id, doc_delta=0, chunk_delta=chunk_total)
+            # Adjust chunk_count by the *delta* so re-ingest that yields a
+            # different chunk_total doesn't drift the counter.
+            chunk_delta = chunk_total - prev_chunk_count
+            self._storage.adjust_kb_counts(
+                kb_id, doc_delta=0, chunk_delta=chunk_delta
+            )
 
         except Exception as exc:  # noqa: BLE001 -- surface the message to the UI
             logger.exception("Ingest failed for document %s: %s", doc_id, exc)
@@ -294,10 +402,10 @@ class KBService:
             )
             raise
 
-        # Refresh doc counters: increment doc_count by exactly 1 (only first success)
-        # We keep adjust_kb_counts doc_delta=1 here so a freshly uploaded doc
-        # is reflected in the KB's doc_count.
-        self._storage.adjust_kb_counts(kb_id, doc_delta=1, chunk_delta=0)
+        # doc_count: only bump on the *first* successful ingest. Re-ingest
+        # of an already-READY doc must not double-count.
+        if not was_ready:
+            self._storage.adjust_kb_counts(kb_id, doc_delta=1, chunk_delta=0)
 
         refreshed = self._storage.get_document(doc_id)
         assert refreshed is not None

@@ -17,7 +17,11 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from app.api import ok
+from app.auth.deps import get_current_user
+from app.auth.models import User, UserRole
+from app.deps import get_kb_service
 from app.kb.models import ChatTurn, Citation
+from app.kb.service import KBService
 from app.kb.storage import SQLiteStorage
 
 router = APIRouter(prefix="/api/kbs/{kb_id}", tags=["chat_history"])
@@ -80,9 +84,14 @@ def _get_storage(request: Request) -> SQLiteStorage:
 async def list_chat_history(
     kb_id: str,
     request: Request,
+    user: User = Depends(get_current_user),
     limit: int = Query(50, ge=1, le=500),
+    svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """List chat turns for ``kb_id``, newest first."""
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_read_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
     storage = _get_storage(request)
     turns = storage.list_chat_turns(kb_id, limit=limit)
     return ok([_turn_payload(t) for t in turns])
@@ -93,8 +102,13 @@ async def get_chat_history(
     kb_id: str,
     turn_id: str,
     request: Request,
+    user: User = Depends(get_current_user),
+    svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Fetch a single chat turn with its full answer + citations."""
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_read_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
     storage = _get_storage(request)
     turn: Optional[ChatTurn] = storage.get_chat_turn(kb_id, turn_id)
     if turn is None:
@@ -109,8 +123,13 @@ async def delete_chat_history(
     kb_id: str,
     turn_id: str,
     request: Request,
+    user: User = Depends(get_current_user),
+    svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Delete a single chat turn."""
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_write_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
     storage = _get_storage(request)
     deleted = storage.delete_chat_turn(kb_id, turn_id)
     if not deleted:
@@ -124,12 +143,17 @@ async def delete_chat_history(
 async def clear_chat_history(
     kb_id: str,
     request: Request,
+    user: User = Depends(get_current_user),
+    svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Delete every chat turn belonging to ``kb_id``.
 
     Used by the ChatPanel "clear" button. Counts the rows removed so
     the client can show a confirmation toast.
     """
+    is_admin = user.role == UserRole.ADMIN
+    if not svc.user_can_write_kb(kb_id, user.id, is_admin=is_admin):
+        raise HTTPException(status_code=403, detail="forbidden")
     storage = _get_storage(request)
     removed = storage.clear_chat_turns(kb_id)
     return ok({"deleted_count": removed, "kb_id": kb_id})

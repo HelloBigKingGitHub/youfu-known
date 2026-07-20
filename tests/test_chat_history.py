@@ -129,8 +129,9 @@ def _create_kb(client: TestClient, name: str) -> str:
     return r.json()["data"]["id"]
 
 
-def test_post_chat_persists_turn(client: TestClient, mock_retriever, mock_embedder):
+def test_post_chat_persists_turn(admin_client: TestClient, mock_retriever, mock_embedder):
     """A successful chat call leaves a row in chat_turns."""
+    client = admin_client
     kb_id = _create_kb(client, "history-api-1")
     r = client.post(f"/api/kbs/{kb_id}/chat", json={"question": "hi?"})
     assert r.status_code == 200
@@ -146,13 +147,14 @@ def test_post_chat_persists_turn(client: TestClient, mock_retriever, mock_embedd
     assert data[0]["citations"][0]["chunk_id"] == "doc-abc::3"
 
 
-def test_post_chat_persists_failure(client: TestClient, mock_embedder):
+def test_post_chat_persists_failure(admin_client: TestClient, mock_embedder):
     """An exception during retrieval also leaves a ``failed`` row."""
 
     class _BoomRetriever:
         async def ask(self, *args, **kwargs):
             raise RuntimeError("simulated LLM down")
 
+    client = admin_client
     kb_id = _create_kb(client, "history-api-2")
     client.app.state.retriever = _BoomRetriever()
 
@@ -167,7 +169,8 @@ def test_post_chat_persists_failure(client: TestClient, mock_embedder):
     assert "simulated" in rows[0]["error"]
 
 
-def test_get_single_chat_turn(client: TestClient, mock_retriever, mock_embedder):
+def test_get_single_chat_turn(admin_client: TestClient, mock_retriever, mock_embedder):
+    client = admin_client
     kb_id = _create_kb(client, "history-api-3")
     r = client.post(f"/api/kbs/{kb_id}/chat", json={"question": "what?"})
     assert r.status_code == 200
@@ -180,13 +183,15 @@ def test_get_single_chat_turn(client: TestClient, mock_retriever, mock_embedder)
     assert body["answer"]
 
 
-def test_get_unknown_chat_turn_returns_404(client: TestClient, mock_retriever):
+def test_get_unknown_chat_turn_returns_404(admin_client: TestClient, mock_retriever):
+    client = admin_client
     kb_id = _create_kb(client, "history-api-4")
     r = client.get(f"/api/kbs/{kb_id}/chats/nope")
     assert r.status_code == 404
 
 
-def test_delete_single_chat_turn(client: TestClient, mock_retriever, mock_embedder):
+def test_delete_single_chat_turn(admin_client: TestClient, mock_retriever, mock_embedder):
+    client = admin_client
     kb_id = _create_kb(client, "history-api-5")
     client.post(f"/api/kbs/{kb_id}/chat", json={"question": "x"})
     turn_id = client.get(f"/api/kbs/{kb_id}/chats").json()["data"][0]["id"]
@@ -197,7 +202,8 @@ def test_delete_single_chat_turn(client: TestClient, mock_retriever, mock_embedd
     assert client.get(f"/api/kbs/{kb_id}/chats/{turn_id}").status_code == 404
 
 
-def test_clear_chat_history_endpoint(client: TestClient, mock_retriever, mock_embedder):
+def test_clear_chat_history_endpoint(admin_client: TestClient, mock_retriever, mock_embedder):
+    client = admin_client
     kb_id = _create_kb(client, "history-api-6")
     for q in ("q1", "q2", "q3"):
         client.post(f"/api/kbs/{kb_id}/chat", json={"question": q})
@@ -210,11 +216,12 @@ def test_clear_chat_history_endpoint(client: TestClient, mock_retriever, mock_em
 
 
 def test_history_survives_storage_reinit(
-    client: TestClient, mock_retriever, mock_embedder
+    admin_client: TestClient, mock_retriever, mock_embedder
 ):
     """Simulating a process restart: drop the in-memory state but keep the
     SQLite file, then re-attach ``app.state.storage`` and confirm the
     chat turn is still visible (this is the e2e persistence check)."""
+    client = admin_client
     kb_id = _create_kb(client, "history-api-7")
     client.post(f"/api/kbs/{kb_id}/chat", json={"question": "survive me"})
 
@@ -234,9 +241,10 @@ def test_history_survives_storage_reinit(
 
 
 def test_upload_then_ask_persists_chat(
-    client: TestClient, mock_retriever, mock_embedder, sample_txt
+    admin_client: TestClient, mock_retriever, mock_embedder, sample_txt
 ):
     """Full E2E: upload docx -> ingest -> ask -> history visible."""
+    client = admin_client
     kb_id = _create_kb(client, "history-e2e")
     with sample_txt.open("rb") as f:
         r = client.post(

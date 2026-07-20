@@ -30,6 +30,7 @@ import yaml
 from chromadb.config import Settings as ChromaSettings
 
 from app.config import (
+    AuthConfig,
     ServerConfig,
     ChatConfig,
     EmbeddingConfig,
@@ -80,8 +81,22 @@ def settings(tmp_storage: Dict[str, Path]) -> Settings:
         ),
         rag=RagConfig(),
         upload=UploadConfig(),
+        auth=AuthConfig(
+            jwt_secret="test-jwt-secret-do-not-use-in-prod",
+            admin_username="root",
+            admin_password="rootpw",
+            bcrypt_rounds=4,
+            cookie_secure=False,
+        ),
     )
-    reset_settings_cache()
+    # Best-effort: if the global ``get_settings`` cache was monkey-patched
+    # by another fixture, the cache_clear call would raise. Swallow that
+    # -- the per-test ``settings`` fixture always returns a fresh instance
+    # anyway, so the cached singleton is irrelevant here.
+    try:
+        reset_settings_cache()
+    except AttributeError:
+        pass
     return s
 
 
@@ -382,12 +397,22 @@ def api_settings(
     """Settings object wired up for the TestClient harness.
 
     Redirects every storage dir at ``tmp_path`` so the app cannot leak
-    real data. Also injects dummy API keys so pydantic Settings accept.
+    real data. Also injects dummy API keys so pydantic Settings accept,
+    and pre-populates an admin bootstrap so the auth lifespan can seed
+    the initial admin user.
     """
     import yaml  # local import keeps top-level deps lean
 
     project_root = Path(__file__).resolve().parent.parent
     monkeypatch.setenv("YOUFU_KNOWN_ROOT", str(project_root))
+    # Pre-populate admin bootstrap creds so the lifespan handler can
+    # seed the initial admin when the users table is empty.
+    monkeypatch.setenv("YOUFU_ADMIN_USERNAME", "root")
+    monkeypatch.setenv("YOUFU_ADMIN_PASSWORD", "rootpw")
+    monkeypatch.setenv("YOUFU_COOKIE_SECURE", "false")
+    monkeypatch.setenv(
+        "YOUFU_JWT_SECRET", "test-jwt-secret-do-not-use-in-prod"
+    )
     # Drop any cached singleton so the env-var change takes effect.
     import app.config as config_mod
     config_mod.get_settings.cache_clear()  # type: ignore[attr-defined]
@@ -396,6 +421,14 @@ def api_settings(
     importlib.reload(config_mod)
 
     settings = _make_settings_for_testclient(project_root, tmp_path)
+    # Lower bcrypt cost so register/login tests stay snappy.
+    settings.auth.bcrypt_rounds = 4
+    settings.auth.session_hours = 24
+    settings.auth.refresh_days = 30
+    settings.auth.cookie_secure = False
+    settings.auth.jwt_secret = "test-jwt-secret-do-not-use-in-prod"
+    settings.auth.admin_username = "root"
+    settings.auth.admin_password = "rootpw"
     import app.deps as deps
     monkeypatch.setattr(config_mod, "get_settings", lambda: settings)
     monkeypatch.setattr(deps, "get_settings", lambda: settings)
@@ -404,7 +437,12 @@ def api_settings(
 
 @pytest.fixture()
 def client(api_settings: Settings) -> Iterator[TestClient]:
-    """Spin up the FastAPI app pointed at the temp storage."""
+    """Spin up the FastAPI app pointed at the temp storage.
+
+    The lifespan handler runs on context entry, which (because
+    ``api_settings`` seeded admin credentials) will bootstrap the
+    initial admin. Tests that need to log in can use ``admin_client``.
+    """
     from fastapi.testclient import TestClient
 
     from main import create_app
@@ -412,6 +450,22 @@ def client(api_settings: Settings) -> Iterator[TestClient]:
     app = create_app()
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
+
+
+@pytest.fixture()
+def admin_client(client: TestClient) -> TestClient:
+    """Client with the bootstrapped admin already logged in.
+
+    Most existing tests want a happy-path admin session; this fixture
+    removes the boilerplate from each test. If you need a fresh
+    session (e.g. to test logout), use ``client`` directly.
+    """
+    r = client.post(
+        "/api/auth/login",
+        json={"username": "root", "password": "rootpw"},
+    )
+    assert r.status_code == 200, r.text
+    return client
 
 
 class _FakeRetriever:

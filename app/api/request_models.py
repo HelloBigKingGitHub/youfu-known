@@ -24,6 +24,7 @@ class KnowledgeBaseUpdate(BaseModel):
 
     name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     description: Optional[str] = Field(default=None, max_length=1024)
+    is_public: Optional[bool] = Field(default=None)
 
 
 __all__ = ["KnowledgeBaseCreate", "KnowledgeBaseUpdate"]

@@ -33,36 +33,37 @@ def test_health(client: TestClient) -> None:
     assert body["data"]["status"] == "ok"
 
 
-def test_kb_lifecycle(client: TestClient) -> None:
+def test_kb_lifecycle(admin_client: TestClient) -> None:
     """Create KB -> list -> detail -> delete."""
-    create = client.post("/api/kbs", json={"name": "alpha"})
+    create = admin_client.post("/api/kbs", json={"name": "alpha"})
     assert create.status_code == 201, create.text
     kb_id = create.json()["data"]["id"]
     assert kb_id
 
-    listed = client.get("/api/kbs").json()["data"]
+    listed = admin_client.get("/api/kbs").json()["data"]
     assert any(k["id"] == kb_id for k in listed)
 
-    detail = client.get(f"/api/kbs/{kb_id}")
+    detail = admin_client.get(f"/api/kbs/{kb_id}")
     assert detail.status_code == 200
     assert detail.json()["data"]["kb"]["doc_count"] == 0
 
-    deleted = client.delete(f"/api/kbs/{kb_id}")
+    deleted = admin_client.delete(f"/api/kbs/{kb_id}")
     assert deleted.status_code == 200
 
-    missing = client.get(f"/api/kbs/{kb_id}")
+    missing = admin_client.get(f"/api/kbs/{kb_id}")
     assert missing.status_code == 404
     assert missing.json()["code"] == 404
 
 
 def test_upload_then_status_then_chat(
-    client: TestClient, mock_retriever, mock_embedder
+    admin_client: TestClient, mock_retriever, mock_embedder
 ) -> None:
     """Upload a sample, run ingest, wait for ready, ask a question."""
     import asyncio
 
     from app.jobs.ingest import run_ingest
 
+    client = admin_client
     kb_id = client.post("/api/kbs", json={"name": "beta"}).json()["data"]["id"]
 
     sample = Path(__file__).resolve().parent / "samples" / "a.txt"
@@ -95,23 +96,23 @@ def test_upload_then_status_then_chat(
     assert body["citations"][0]["doc_filename"]
 
 
-def test_chat_rejects_empty_question(client: TestClient, mock_retriever) -> None:
+def test_chat_rejects_empty_question(admin_client: TestClient, mock_retriever) -> None:
     """Empty question returns 400."""
-    kb_id = client.post("/api/kbs", json={"name": "gamma"}).json()["data"]["id"]
-    r = client.post(f"/api/kbs/{kb_id}/chat", json={"question": "   "})
+    kb_id = admin_client.post("/api/kbs", json={"name": "gamma"}).json()["data"]["id"]
+    r = admin_client.post(f"/api/kbs/{kb_id}/chat", json={"question": "   "})
     assert r.status_code == 400
 
 
-def test_chat_rejects_stream(client: TestClient, mock_retriever) -> None:
+def test_chat_rejects_stream(admin_client: TestClient, mock_retriever) -> None:
     """stream=true returns 501 (TODO marker)."""
-    kb_id = client.post("/api/kbs", json={"name": "delta"}).json()["data"]["id"]
-    r = client.post(f"/api/kbs/{kb_id}/chat", json={"question": "x", "stream": True})
+    kb_id = admin_client.post("/api/kbs", json={"name": "delta"}).json()["data"]["id"]
+    r = admin_client.post(f"/api/kbs/{kb_id}/chat", json={"question": "x", "stream": True})
     assert r.status_code == 501
 
 
-def test_validation_error_envelope(client: TestClient) -> None:
+def test_validation_error_envelope(admin_client: TestClient) -> None:
     """Validation errors return our envelope, not FastAPI default."""
-    r = client.post("/api/kbs", json={})
+    r = admin_client.post("/api/kbs", json={})
     assert r.status_code == 400
     body = r.json()
     assert body["code"] == 400
@@ -119,7 +120,15 @@ def test_validation_error_envelope(client: TestClient) -> None:
     assert "detail" in body
 
 
-def test_get_unknown_kb_returns_404(client: TestClient) -> None:
-    r = client.get("/api/kbs/nonexistent-id")
+def test_get_unknown_kb_returns_404(admin_client: TestClient) -> None:
+    r = admin_client.get("/api/kbs/nonexistent-id")
     assert r.status_code == 404
     assert r.json()["code"] == 404
+
+
+def test_unauthenticated_kb_requests_are_401(client: TestClient) -> None:
+    """No login -> 401 on protected endpoints."""
+    r = client.get("/api/kbs")
+    assert r.status_code == 401
+    r = client.post("/api/kbs", json={"name": "x"})
+    assert r.status_code == 401

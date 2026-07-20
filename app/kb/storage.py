@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL UNIQUE,
     description  TEXT DEFAULT '',
+    owner_id     TEXT,
+    is_public    INTEGER DEFAULT 0,
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     doc_count    INTEGER DEFAULT 0,
     chunk_count  INTEGER DEFAULT 0
@@ -56,6 +58,7 @@ CREATE TABLE IF NOT EXISTS documents (
     status       TEXT NOT NULL,
     error        TEXT DEFAULT '',
     chunk_count  INTEGER DEFAULT 0,
+    owner_id     TEXT,
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     processed_at TIMESTAMP
 );
@@ -70,6 +73,7 @@ CREATE TABLE IF NOT EXISTS chat_turns (
     error           TEXT DEFAULT '',
     citations_json  TEXT NOT NULL DEFAULT '[]',
     status          TEXT NOT NULL DEFAULT 'ready',
+    user_id         TEXT,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     latency_ms      INTEGER DEFAULT 0
 );
@@ -238,8 +242,51 @@ class SQLiteStorage:
                     + CREATE_CHUNK_SQL
                     + CREATE_INDEX_SQL
                 )
+                self._ensure_auth_columns(conn)
                 conn.commit()
             self._initialized = True
+
+    def _ensure_auth_columns(self, conn: sqlite3.Connection) -> None:
+        """Add owner / visibility / user_id columns to legacy tables.
+
+        ``CREATE TABLE IF NOT EXISTS`` is a no-op when the table already
+        exists, so DBs provisioned before the auth module shipped would
+        miss the new columns. ``PRAGMA table_info`` lets us detect this
+        and patch in the missing columns. Safe to re-run.
+        """
+        existing_tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "knowledge_bases" in existing_tables:
+            cols = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(knowledge_bases)"
+                ).fetchall()
+            }
+            if "owner_id" not in cols:
+                conn.execute("ALTER TABLE knowledge_bases ADD COLUMN owner_id TEXT")
+            if "is_public" not in cols:
+                conn.execute(
+                    "ALTER TABLE knowledge_bases ADD COLUMN is_public INTEGER DEFAULT 0"
+                )
+        if "documents" in existing_tables:
+            cols = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(documents)").fetchall()
+            }
+            if "owner_id" not in cols:
+                conn.execute("ALTER TABLE documents ADD COLUMN owner_id TEXT")
+        if "chat_turns" in existing_tables:
+            cols = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(chat_turns)").fetchall()
+            }
+            if "user_id" not in cols:
+                conn.execute("ALTER TABLE chat_turns ADD COLUMN user_id TEXT")
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
