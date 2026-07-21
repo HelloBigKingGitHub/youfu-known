@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 import pytest
@@ -114,7 +114,7 @@ def test_verify_turnstile_rejects_cloudflare_errors(
     assert result is False
 
 
-def test_register_in_dev_mode_without_token(client, auth_admin) -> None:
+def test_register_in_dev_mode_without_token(client) -> None:
     response = client.post(
         "/api/auth/register",
         json={"username": "devmember", "password": "devmemberpw"},
@@ -126,7 +126,6 @@ def test_register_in_dev_mode_without_token(client, auth_admin) -> None:
 
 def test_register_rejects_bad_turnstile_token(
     client,
-    auth_admin,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("YOUFU_TURNSTILE_SECRET", "production-secret")
@@ -147,7 +146,7 @@ def test_register_rejects_bad_turnstile_token(
     assert client.app.state.user_store.get_by_username("blockedmember") is None
 
 
-def test_register_approve_then_login(client, auth_admin, monkeypatch) -> None:
+def test_register_approve_then_login(client, monkeypatch) -> None:
     monkeypatch.delenv("YOUFU_TURNSTILE_SECRET", raising=False)
     register = client.post(
         "/api/auth/register",

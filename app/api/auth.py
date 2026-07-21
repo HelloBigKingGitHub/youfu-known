@@ -114,10 +114,12 @@ async def register(body: UserCreate, request: Request) -> dict:
     """Register a new ``member`` account in the unapproved state."""
     svc = _get_service(request)
     try:
-        user = svc.register(
+        user = await svc.register(
             username=body.username,
             password=body.password,
             email=body.email,
+            turnstile_token=body.turnstile_token,
+            request=request,
         )
     except UsernameTakenError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc

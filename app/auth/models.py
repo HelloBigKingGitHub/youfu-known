@@ -64,6 +64,9 @@ class UserCreate(BaseModel):
         pattern=r"^$|^[\w.+-]+@[\w-]+\.[\w.-]+$",
     )
     password: str = Field(min_length=8, max_length=256)
+    turnstile_token: str = Field(
+        default="", description="Cloudflare Turnstile token"
+    )
 
 
 class UserLogin(BaseModel):

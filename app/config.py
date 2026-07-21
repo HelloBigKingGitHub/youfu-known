@@ -8,6 +8,7 @@ Resolution rules:
 - chat.api_key              <- MINIMAX_API_KEY
 - embedding.api_key         <- DASHSCOPE_API_KEY
 - auth.jwt_secret           <- YOUFU_JWT_SECRET
+- auth.turnstile_secret_env <- YOUFU_TURNSTILE_SECRET
 - auth.admin_username       <- YOUFU_ADMIN_USERNAME
 - auth.admin_password       <- YOUFU_ADMIN_PASSWORD
 - auth.cookie_secure        <- YOUFU_COOKIE_SECURE
@@ -103,6 +104,7 @@ class AuthConfig(BaseModel):
     """
 
     jwt_secret: Optional[str] = None
+    turnstile_secret_env: str = "YOUFU_TURNSTILE_SECRET"
     admin_username: Optional[str] = "admin"
     admin_password: Optional[str] = None
     cookie_secure: bool = True

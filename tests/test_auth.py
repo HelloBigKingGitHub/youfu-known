@@ -14,6 +14,7 @@ on ``app.state``.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Iterator
 
@@ -293,6 +294,10 @@ def _make_service(sqlite_storage, settings):
     return AuthService(store=store, settings=settings), store
 
 
+def _register(svc, *args, **kwargs):
+    return asyncio.run(svc.register(*args, **kwargs))
+
+
 def test_service_bootstrap_admin_creates_when_empty(sqlite_storage, settings) -> None:
     svc, _ = _make_service(sqlite_storage, settings)
     settings.auth.admin_username = "root"
@@ -321,7 +326,7 @@ def test_service_register_creates_unapproved_member(
     sqlite_storage, settings
 ) -> None:
     svc, _ = _make_service(sqlite_storage, settings)
-    user = svc.register("alice", "alicepw12", email="a@x.com")
+    user = _register(svc,"alice", "alicepw12", email="a@x.com")
     assert user.role == UserRole.MEMBER
     assert user.is_approved is False
     assert user.email == "a@x.com"
@@ -330,21 +335,21 @@ def test_service_register_creates_unapproved_member(
 def test_service_register_rejects_short_password(sqlite_storage, settings) -> None:
     svc, _ = _make_service(sqlite_storage, settings)
     with pytest.raises(ValueError):
-        svc.register("alice", "short")
+        _register(svc,"alice", "short")
 
 
 def test_service_register_rejects_duplicate(sqlite_storage, settings) -> None:
     from app.auth.service import UsernameTakenError
 
     svc, _ = _make_service(sqlite_storage, settings)
-    svc.register("alice", "alicepw12")
+    _register(svc,"alice", "alicepw12")
     with pytest.raises(UsernameTakenError):
-        svc.register("alice", "alicepw12")
+        _register(svc,"alice", "alicepw12")
 
 
 def test_service_login_success_mints_tokens(sqlite_storage, settings) -> None:
     svc, _ = _make_service(sqlite_storage, settings)
-    svc.register("alice", "alicepw12")
+    _register(svc,"alice", "alicepw12")
     # Approve so login succeeds.
     store_user = svc.list_users()[0]
     # The store isn't directly exposed; use the UserStore via list_users.
@@ -368,7 +373,7 @@ def test_service_login_rejects_wrong_password(sqlite_storage, settings) -> None:
     from app.auth.service import InvalidCredentialsError
 
     svc, _ = _make_service(sqlite_storage, settings)
-    svc.register("alice", "alicepw12")
+    _register(svc,"alice", "alicepw12")
     with pytest.raises(InvalidCredentialsError):
         svc.login("alice", "wrong-pw")
 
@@ -385,7 +390,7 @@ def test_service_login_rejects_unapproved(sqlite_storage, settings) -> None:
     from app.auth.service import UserNotApprovedError
 
     svc, _ = _make_service(sqlite_storage, settings)
-    svc.register("alice", "alicepw12")
+    _register(svc,"alice", "alicepw12")
     with pytest.raises(UserNotApprovedError):
         svc.login("alice", "alicepw12")
 
@@ -395,7 +400,7 @@ def test_service_login_rejects_inactive(sqlite_storage, settings) -> None:
     from app.auth.storage import UserStore
 
     svc, store = _make_service(sqlite_storage, settings)
-    user = svc.register("alice", "alicepw12")
+    user = _register(svc,"alice", "alicepw12")
     UserStore(settings, db_path=sqlite_storage.db_path).update_user(
         user.id, is_approved=True, is_active=False
     )
@@ -405,7 +410,7 @@ def test_service_login_rejects_inactive(sqlite_storage, settings) -> None:
 
 def test_service_refresh_roundtrip(sqlite_storage, settings) -> None:
     svc, _ = _make_service(sqlite_storage, settings)
-    user = svc.register("alice", "alicepw12")
+    user = _register(svc,"alice", "alicepw12")
     from app.auth.storage import UserStore
 
     UserStore(settings, db_path=sqlite_storage.db_path).update_user(
@@ -422,7 +427,7 @@ def test_service_change_password(sqlite_storage, settings) -> None:
     from app.auth.service import InvalidCredentialsError
 
     svc, _ = _make_service(sqlite_storage, settings)
-    user = svc.register("alice", "alicepw12")
+    user = _register(svc,"alice", "alicepw12")
     from app.auth.storage import UserStore
 
     UserStore(settings, db_path=sqlite_storage.db_path).update_user(
@@ -438,7 +443,7 @@ def test_service_change_password(sqlite_storage, settings) -> None:
 
 def test_service_change_password_rejects_short(sqlite_storage, settings) -> None:
     svc, _ = _make_service(sqlite_storage, settings)
-    user = svc.register("alice", "alicepw12")
+    user = _register(svc,"alice", "alicepw12")
     with pytest.raises(ValueError):
         svc.change_password(user.id, "alicepw12", "short")
 
@@ -459,7 +464,7 @@ def test_service_admin_cannot_demote_self(sqlite_storage, settings) -> None:
 
 def test_service_admin_can_change_other_users(sqlite_storage, settings) -> None:
     svc, _ = _make_service(sqlite_storage, settings)
-    user = svc.register("alice", "alicepw12")
+    user = _register(svc,"alice", "alicepw12")
     updated = svc.update_user(
         "admin-id", user.id, is_approved=True, role=UserRole.ADMIN
     )

@@ -67,6 +67,7 @@ upload:
 # ---------------------------------------------------------------------------
 auth:
   jwt_secret: null            # YOUFU_JWT_SECRET
+  turnstile_secret_env: YOUFU_TURNSTILE_SECRET
   admin_username: admin       # YOUFU_ADMIN_USERNAME
   admin_password: null        # YOUFU_ADMIN_PASSWORD (required to bootstrap)
   cookie_secure: true         # YOUFU_COOKIE_SECURE (set false for http:// dev)
