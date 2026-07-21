@@ -10,12 +10,6 @@ import {
   Box,
   Button,
   Divider,
-  Drawer,
-  DrawerBody,
-  DrawerCloseButton,
-  DrawerContent,
-  DrawerHeader,
-  DrawerOverlay,
   Flex,
   HStack,
   IconButton,
@@ -30,28 +24,25 @@ import {
 import { DeleteIcon } from '@chakra-ui/icons'
 import { useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import type { KB, User } from '../types'
+import type { KB } from '../types'
 import { api, ApiError } from '../api'
 import { NewKnowledgeBaseButton } from './NewKnowledgeBaseButton'
-import { UserMenu } from './UserMenu'
 
 interface Props {
   kbs: KB[]
   loading: boolean
   onRefresh: () => void
   isMobile: boolean
-  drawer: {
-    isOpen: boolean
-    onOpen: () => void
-    onClose: () => void
-    onToggle?: () => void
-  }
   onNavigate: (kbId: string) => void
-  user: User | null
-  onLogout: () => void
 }
 
-export function KnowledgeBaseSidebar({ kbs, loading, onRefresh, isMobile, drawer, onNavigate, user, onLogout }: Props) {
+export function KnowledgeBaseSidebar({
+  kbs,
+  loading,
+  onRefresh,
+  isMobile,
+  onNavigate,
+}: Props) {
   const navigate = useNavigate()
   const { kbId: activeId } = useParams<{ kbId: string }>()
   const {
@@ -93,25 +84,17 @@ export function KnowledgeBaseSidebar({ kbs, loading, onRefresh, isMobile, drawer
     onNavigate(id)
   }
 
-  // 侧栏内容 (桌面 / Drawer body 共用)
-  const body = (
+  return (
     <Box
-      w={{ base: '280px', md: '240px', lg: '280px' }}
-      h={{ base: 'auto', md: '100vh' }}
+      w={isMobile ? 'full' : { md: '240px', lg: '280px' }}
+      h={isMobile ? 'auto' : 'full'}
       bg="white"
-      borderRight={{ base: 'none', md: '1px' }}
+      borderRight={isMobile ? 'none' : '1px'}
       borderColor="gray.200"
       p={4}
       overflowY="auto"
       flexShrink={0}
     >
-      {/* 标题只在桌面显示 (移动端 App.tsx 顶栏已经有) */}
-      {!isMobile && (
-        <Text fontSize="lg" fontWeight="bold" mb={3} color="brand.700">
-          youfu-known
-        </Text>
-      )}
-      <UserMenu user={user} onLogout={onLogout} />
       <NewKnowledgeBaseButton onCreated={onRefresh} />
 
       <Divider my={4} />
@@ -225,25 +208,4 @@ export function KnowledgeBaseSidebar({ kbs, loading, onRefresh, isMobile, drawer
       </AlertDialog>
     </Box>
   )
-
-  if (isMobile) {
-    return (
-      <Drawer
-        isOpen={drawer.isOpen}
-        placement="left"
-        onClose={drawer.onClose}
-        size="xs"
-      >
-        <DrawerOverlay />
-        <DrawerContent>
-          <DrawerCloseButton />
-          <DrawerHeader borderBottomWidth="1px" py={3}>
-            知识库
-          </DrawerHeader>
-          <DrawerBody p={0}>{body}</DrawerBody>
-        </DrawerContent>
-      </Drawer>
-    )
-  }
-  return body
 }

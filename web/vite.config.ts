@@ -9,7 +9,7 @@ import react from '@vitejs/plugin-react'
 //   YOUFU_VITE_API_TARGET=http://127.0.0.1:8765
 export default defineConfig(({ mode }) => {
   // loadEnv 把 VITE_ / 你自定义的 prefix 注入进来, 我们用自定义前缀
-  const env = loadEnv(mode, process.cwd(), 'YOUFU_')
+  const env = loadEnv(mode, process.cwd(), ['YOUFU_', 'VITE_'])
   const target = env.YOUFU_VITE_API_TARGET || 'http://127.0.0.1:8000'
   return {
     plugins: [react()],
