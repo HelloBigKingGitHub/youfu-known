@@ -150,7 +150,11 @@ class AuthService:
     ) -> User:
         """Create a ``member`` account in the unapproved state."""
         remote_ip = request.client.host if request and request.client else None
-        if not await verify_turnstile(turnstile_token, remote_ip):
+        if not await verify_turnstile(
+            turnstile_token,
+            remote_ip,
+            secret_env=self._settings.auth.turnstile_secret_env,
+        ):
             raise ValueError("captcha verification failed")
 
         username = (username or "").strip()

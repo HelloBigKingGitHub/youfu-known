@@ -17,9 +17,13 @@ TURNSTILE_TEST_SECRET = "1x0000000000000000000000000000000AA"
 TURNSTILE_TEST_SECRET_ALWAYS_BLOCKS = "2x00000000000000000000AB"
 
 
-async def verify_turnstile(token: str, remote_ip: Optional[str] = None) -> bool:
+async def verify_turnstile(
+    token: str,
+    remote_ip: Optional[str] = None,
+    secret_env: str = "YOUFU_TURNSTILE_SECRET",
+) -> bool:
     """Verify a Turnstile token, skipping verification only in dev mode."""
-    secret = os.getenv("YOUFU_TURNSTILE_SECRET", "").strip()
+    secret = os.getenv(secret_env, "").strip()
 
     if not secret:
         logger.warning(

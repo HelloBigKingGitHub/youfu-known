@@ -86,6 +86,24 @@ def test_verify_turnstile_accepts_cloudflare_success(
     ]
 
 
+def test_verify_turnstile_uses_configured_secret_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("YOUFU_TURNSTILE_SECRET", raising=False)
+    monkeypatch.setenv("CUSTOM_TURNSTILE_SECRET", "custom-secret")
+    client = _FakeAsyncClient(_FakeResponse({"success": True}))
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", lambda **_: client)
+
+    result = _run(
+        turnstile.verify_turnstile(
+            "valid-token", secret_env="CUSTOM_TURNSTILE_SECRET"
+        )
+    )
+
+    assert result is True
+    assert client.calls[0]["data"]["secret"] == "custom-secret"
+
+
 def test_verify_turnstile_rejects_cloudflare_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -122,6 +140,26 @@ def test_register_in_dev_mode_without_token(client) -> None:
 
     assert response.status_code == 201, response.text
     assert response.json()["data"]["is_approved"] is False
+
+
+def test_register_uses_configured_turnstile_secret(client, monkeypatch) -> None:
+    monkeypatch.delenv("YOUFU_TURNSTILE_SECRET", raising=False)
+    monkeypatch.setenv("CUSTOM_TURNSTILE_SECRET", "custom-secret")
+    client.app.state.settings.auth.turnstile_secret_env = "CUSTOM_TURNSTILE_SECRET"
+    client_stub = _FakeAsyncClient(_FakeResponse({"success": True}))
+    monkeypatch.setattr(turnstile.httpx, "AsyncClient", lambda **_: client_stub)
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": "customsecretmember",
+            "password": "customsecretpw",
+            "turnstile_token": "valid-token",
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert client_stub.calls[0]["data"]["secret"] == "custom-secret"
 
 
 def test_register_rejects_bad_turnstile_token(
