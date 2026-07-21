@@ -27,8 +27,8 @@ async def verify_turnstile(
 
     if not secret:
         logger.warning(
-            "YOUFU_TURNSTILE_SECRET not set — skipping Turnstile verification "
-            "(dev mode)"
+            "%s not set — skipping Turnstile verification (dev mode)",
+            secret_env,
         )
         return True
 
