@@ -143,6 +143,61 @@ def test_user_store_list_and_count(sqlite_storage, settings) -> None:
     assert [u.username for u in store.list_users()] == ["a", "b"]
 
 
+def test_user_store_list_users_orders_by_natural_created_at(
+    sqlite_storage, settings
+) -> None:
+    """``list_users`` returns rows in natural insert order.
+
+    The lifespan picks the bootstrap admin for orphan-row migration via
+    ``list_users()`` and filters by role -- it must NOT depend on
+    ``settings.auth.admin_username``. If the operator renames
+    ``YOUFU_ADMIN_USERNAME`` in ``.env`` after the original admin is
+    already in the DB, the migration must still target the originally
+    bootstrapped admin (the first admin by ``created_at``), not the
+    freshly-configured username.
+    """
+    from app.auth.storage import UserStore
+
+    # ``.env`` claims a different admin username than what's in the DB
+    # -- simulates an operator renaming the bootstrap admin.
+    settings.auth.admin_username = "newly-configured-admin"
+
+    store = UserStore(settings, db_path=sqlite_storage.db_path)
+    original_admin = store.create_user(
+        username="original-admin",
+        password_hash="h",
+        role=UserRole.ADMIN,
+        is_approved=True,
+    )
+    later_member = store.create_user(username="late-member", password_hash="h")
+
+    users = store.list_users()
+    assert [u.id for u in users] == [original_admin.id, later_member.id]
+    # The first admin by natural order is the one already in the DB,
+    # NOT the .env-configured username.
+    assert users[0].username == "original-admin"
+    assert users[0].role == UserRole.ADMIN  # the original admin keeps its role
+
+
+def test_user_store_list_users_tiebreaks_on_rowid(
+    sqlite_storage, settings
+) -> None:
+    """Same-second creates must order by ``rowid`` (insert order).
+
+    SQLite's ``CURRENT_TIMESTAMP`` resolves to one-second granularity,
+    so two users inserted in the same second share ``created_at``; we
+    need ``rowid ASC`` as the deterministic tiebreaker so the natural
+    order matches insertion order instead of being arbitrary.
+    """
+    from app.auth.storage import UserStore
+
+    store = UserStore(settings, db_path=sqlite_storage.db_path)
+    first = store.create_user(username="first", password_hash="h")
+    second = store.create_user(username="second", password_hash="h")
+    third = store.create_user(username="third", password_hash="h")
+    assert [u.id for u in store.list_users()] == [first.id, second.id, third.id]
+
+
 def test_user_store_update_fields(sqlite_storage, settings) -> None:
     from app.auth.storage import UserStore
 

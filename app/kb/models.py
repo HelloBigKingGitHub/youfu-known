@@ -42,6 +42,8 @@ class KnowledgeBase(BaseModel):
     created_at: datetime
     doc_count: int = 0
     chunk_count: int = 0
+    owner_id: Optional[str] = None
+    is_public: bool = False
 
 
 class Document(BaseModel):
@@ -125,6 +127,7 @@ class ChatTurn(BaseModel):
     error: str = ""
     citations: List[Citation] = Field(default_factory=list)
     status: str  # "ready" | "failed"
+    user_id: Optional[str] = None
     created_at: datetime
     latency_ms: int = 0
 

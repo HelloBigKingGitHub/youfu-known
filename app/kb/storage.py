@@ -128,6 +128,8 @@ def _row_to_kb(row: sqlite3.Row) -> KnowledgeBase:
         created_at=created_at,
         doc_count=int(row["doc_count"] or 0),
         chunk_count=int(row["chunk_count"] or 0),
+        owner_id=row["owner_id"],
+        is_public=bool(row["is_public"] or 0),
     )
 
 
@@ -187,6 +189,7 @@ def _row_to_chat_turn(row: sqlite3.Row) -> ChatTurn:
         error=row["error"] or "",
         citations=citations,
         status=row["status"],
+        user_id=row["user_id"],
         created_at=_parse_dt(row["created_at"]),
         latency_ms=int(row["latency_ms"] or 0),
     )

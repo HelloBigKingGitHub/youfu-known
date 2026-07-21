@@ -53,6 +53,7 @@ def _turn_payload(turn: ChatTurn) -> dict:
         "error": turn.error,
         "citations": [_citation_payload(c) for c in turn.citations],
         "status": turn.status,
+        "user_id": getattr(turn, "user_id", None),
         "created_at": (
             turn.created_at.isoformat() if turn.created_at else None
         ),

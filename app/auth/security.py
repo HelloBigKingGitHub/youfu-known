@@ -13,6 +13,19 @@ Two pieces of crypto live here:
   pulled from :class:`app.config.AuthConfig.jwt_secret`. The ``typ``
   claim disambiguates access vs refresh so a refresh token cannot be
   presented at an access-token endpoint.
+
+Secret stability and token lifetime
+-----------------------------------
+
+The HS256 signing secret is the only thing standing between an
+attacker and forged tokens, so it MUST be stable across restarts in
+any non-throwaway deployment. When ``YOUFU_JWT_SECRET`` is unset,
+:mod:`app.config` falls back to a per-process random secret; every
+restart rotates it, which **invalidates every outstanding access and
+refresh token** and forces every logged-in user to log in again. A
+loud multi-line WARNING is logged at boot whenever that fallback
+fires, but the right fix is to set ``YOUFU_JWT_SECRET`` in ``.env``
+(a long random string) and keep it stable.
 """
 
 from __future__ import annotations

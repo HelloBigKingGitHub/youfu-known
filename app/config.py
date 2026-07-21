@@ -20,6 +20,7 @@ Resolution rules:
 
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 from functools import lru_cache
@@ -229,10 +230,28 @@ def load_settings(
     if (env_val := os.getenv("YOUFU_JWT_SECRET")):
         raw_auth["jwt_secret"] = env_val
     elif not raw_auth.get("jwt_secret"):
-        # Stable per-installation dev fallback so first-run / tests work
-        # without an .env entry. Production deployments MUST override via
-        # YOUFU_JWT_SECRET (a warning is logged at startup).
+        # No YOUFU_JWT_SECRET set -- fall back to a fresh per-process
+        # random value. This keeps first-run / tests working without a
+        # configured secret, but every restart rotates the secret, which
+        # invalidates all outstanding access + refresh tokens and forces
+        # every logged-in user to log in again. Loud, multi-line WARNING
+        # so the operator cannot miss it in the boot log.
         raw_auth["jwt_secret"] = secrets.token_hex(32)
+        if not os.getenv("_YOUFU_QUIET_JWT_WARNING"):
+            logging.getLogger(__name__).warning(
+                "\n"
+                "============================================================\n"
+                "  YOUFU_JWT_SECRET is NOT set -- using an ephemeral random\n"
+                "  secret for this process only.\n"
+                "\n"
+                "  Every restart rotates the secret, which INVALIDATES all\n"
+                "  outstanding access + refresh tokens. Every logged-in\n"
+                "  user will be forced to log in again on restart.\n"
+                "\n"
+                "  Set YOUFU_JWT_SECRET in .env (a long random string) for\n"
+                "  any non-throwaway deployment.\n"
+                "============================================================"
+            )
     if (env_val := os.getenv("YOUFU_ADMIN_USERNAME")):
         raw_auth["admin_username"] = env_val
     if (env_val := os.getenv("YOUFU_ADMIN_PASSWORD")):
