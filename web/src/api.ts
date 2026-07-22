@@ -131,14 +131,19 @@ export const api = {
       }),
     }),
   getKB: (kbId: string) => request<KBDetail>(`/api/kbs/${kbId}`),
-  updateKB: (kbId: string, name?: string, description?: string) =>
+  updateKB: (
+    kbId: string,
+    body: {
+      name?: string
+      description?: string
+      is_shared?: boolean
+      is_public?: boolean
+    },
+  ) =>
     request<KB>(`/api/kbs/${kbId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...(name !== undefined ? { name } : {}),
-        ...(description !== undefined ? { description } : {}),
-      }),
+      body: JSON.stringify(body),
     }),
   deleteKB: (kbId: string) =>
     request<{ deleted: string }>(`/api/kbs/${kbId}`, {
@@ -207,6 +212,24 @@ export const api = {
       `/api/kbs/${kbId}/documents/${docId}`,
       { method: 'DELETE' },
     ),
+
+  // Admin
+  adminListUsers: () => request<User[]>('/api/admin/users'),
+  adminUpdateUser: (
+    userId: string,
+    body: {
+      is_approved?: boolean
+      role?: string
+      is_active?: boolean
+    },
+  ) =>
+    request<User>(`/api/admin/users/${userId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  adminDeleteUser: (userId: string) =>
+    request<void>(`/api/admin/users/${userId}`, { method: 'DELETE' }),
 
   // 问答
   chat: (kbId: string, question: string, topK = 6) =>

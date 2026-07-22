@@ -22,6 +22,7 @@ import {
 } from 'react-router-dom'
 import type { KB, User } from './types'
 import { api, USER_STORAGE_KEY } from './api'
+import { AdminUsersPage } from './components/AdminUsersPage'
 import { ChangePasswordPage } from './components/ChangePasswordPage'
 import { EmptyState } from './components/EmptyState'
 import { KBChatTab } from './components/KBChatTab'
@@ -136,6 +137,7 @@ function AuthenticatedApp({ user, onLogout }: AuthenticatedAppProps) {
             onRefresh={refreshKBs}
             isMobile={false}
             onNavigate={handleNavigate}
+            user={user}
           />
         )}
 
@@ -160,6 +162,7 @@ function AuthenticatedApp({ user, onLogout }: AuthenticatedAppProps) {
                   onRefresh={refreshKBs}
                   isMobile={true}
                   onNavigate={handleNavigate}
+                  user={user}
                 />
               </DrawerBody>
             </DrawerContent>
@@ -185,6 +188,7 @@ function AuthenticatedApp({ user, onLogout }: AuthenticatedAppProps) {
               path="/change-password"
               element={<ChangePasswordPage />}
             />
+            <Route path="/admin/users" element={<AdminUsersPage />} />
             <Route path="*" element={<EmptyState />} />
           </Routes>
         </Box>

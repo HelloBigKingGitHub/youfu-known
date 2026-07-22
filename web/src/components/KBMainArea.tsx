@@ -7,6 +7,7 @@
 import {
   Badge,
   Box,
+  Button,
   Flex,
   HStack,
   Heading,
@@ -17,11 +18,13 @@ import {
   TabPanels,
   Tabs,
   Text,
+  useBreakpointValue,
 } from '@chakra-ui/react'
-import { useCallback, useEffect, useState } from 'react'
+import { LockIcon, UnlockIcon } from '@chakra-ui/icons'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import type { Document, KB } from '../types'
-import { api, ApiError } from '../api'
+import type { Document, KB, User } from '../types'
+import { api, ApiError, USER_STORAGE_KEY } from '../api'
 import { useToast } from '@chakra-ui/react'
 
 interface Props {
@@ -32,9 +35,21 @@ export function KBMainArea({ kbId }: Props) {
   const [kb, setKB] = useState<KB | null>(null)
   const [documents, setDocuments] = useState<Document[]>([])
   const [loading, setLoading] = useState(true)
+  const [togglingShare, setTogglingShare] = useState(false)
   const toast = useToast()
   const navigate = useNavigate()
   const location = useLocation()
+  const isMobile = useBreakpointValue({ base: true, md: false })
+
+  const currentUser = useMemo<User | null>(() => {
+    const raw = localStorage.getItem(USER_STORAGE_KEY)
+    if (!raw) return null
+    try {
+      return JSON.parse(raw) as User
+    } catch {
+      return null
+    }
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
@@ -53,6 +68,43 @@ export function KBMainArea({ kbId }: Props) {
     setLoading(true)
     refresh()
   }, [refresh])
+
+  const isOwnerOrAdmin =
+    currentUser &&
+    kb &&
+    (currentUser.role === 'admin' || currentUser.id === kb.owner_id)
+
+  const handleToggleShare = async () => {
+    if (!kb || !isOwnerOrAdmin) return
+    setTogglingShare(true)
+    try {
+      const updated = await api.updateKB(kb.id, {
+        is_shared: !kb.is_shared,
+      })
+      setKB({
+        ...kb,
+        is_shared: updated.is_shared,
+        is_public: updated.is_public,
+      })
+      toast({
+        title: updated.is_shared ? '已设为共享' : '已设为私有',
+        status: 'success',
+        duration: 2000,
+        position: 'top',
+      })
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : '切换失败'
+      toast({
+        title: '切换失败',
+        description: msg,
+        status: 'error',
+        duration: 3000,
+        position: 'top',
+      })
+    } finally {
+      setTogglingShare(false)
+    }
+  }
 
   // 根据 URL 决定 Tab 索引
   const tabIndex = location.pathname.endsWith('/chat') ? 1 : 0
@@ -86,7 +138,7 @@ export function KBMainArea({ kbId }: Props) {
               {kb.description}
             </Text>
           )}
-          <HStack spacing={2} mt={3}>
+          <HStack spacing={2} mt={3} flexWrap="wrap">
             <Badge
               px={2}
               py={0.5}
@@ -109,6 +161,24 @@ export function KBMainArea({ kbId }: Props) {
             >
               {kb.chunk_count} chunks
             </Badge>
+            <Button
+              size="xs"
+              variant={kb.is_shared ? 'solid' : 'outline'}
+              colorScheme={kb.is_shared ? 'green' : 'gray'}
+              leftIcon={kb.is_shared ? <UnlockIcon /> : <LockIcon />}
+              isDisabled={!isOwnerOrAdmin}
+              isLoading={togglingShare}
+              onClick={handleToggleShare}
+              aria-label={kb.is_shared ? '共享知识库' : '私有知识库'}
+            >
+              {kb.is_shared
+                ? isMobile
+                  ? '共享'
+                  : '👥 共享'
+                : isMobile
+                  ? '私有'
+                  : '🔒 私有'}
+            </Button>
           </HStack>
         </Box>
 

@@ -9,6 +9,9 @@ export interface KB {
   id: string
   name: string
   description: string
+  owner_id: string
+  is_shared: boolean
+  is_public?: boolean
   created_at: string
   doc_count: number
   chunk_count: number
@@ -72,6 +75,7 @@ export interface User {
   email: string | null
   role: string
   is_approved: boolean
+  is_active: boolean
   created_at: string
 }
 

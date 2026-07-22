@@ -24,7 +24,7 @@ import {
 import { DeleteIcon } from '@chakra-ui/icons'
 import { useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import type { KB } from '../types'
+import type { KB, User } from '../types'
 import { api, ApiError } from '../api'
 import { NewKnowledgeBaseButton } from './NewKnowledgeBaseButton'
 
@@ -34,6 +34,7 @@ interface Props {
   onRefresh: () => void
   isMobile: boolean
   onNavigate: (kbId: string) => void
+  user: User | null
 }
 
 export function KnowledgeBaseSidebar({
@@ -42,6 +43,7 @@ export function KnowledgeBaseSidebar({
   onRefresh,
   isMobile,
   onNavigate,
+  user,
 }: Props) {
   const navigate = useNavigate()
   const { kbId: activeId } = useParams<{ kbId: string }>()
@@ -84,6 +86,67 @@ export function KnowledgeBaseSidebar({
     onNavigate(id)
   }
 
+  const myKBs = kbs.filter((kb) => kb.owner_id === user?.id)
+  const sharedKBs = kbs.filter(
+    (kb) => kb.is_shared && kb.owner_id !== user?.id,
+  )
+
+  const renderKBItem = (kb: KB, canDelete: boolean) => {
+    const active = kb.id === activeId
+    return (
+      <ListItem key={kb.id}>
+        <HStack
+          spacing={1}
+          bg={active ? 'brand.50' : 'transparent'}
+          borderRadius="md"
+          _hover={{ bg: active ? 'brand.50' : 'gray.100' }}
+          pr={1}
+          minH={{ base: '44px', md: 'auto' }}
+        >
+          <Box
+            flex={1}
+            px={3}
+            py={2}
+            cursor="pointer"
+            onClick={() => goKB(kb.id)}
+            borderLeft="3px solid"
+            borderLeftColor={active ? 'brand.500' : 'transparent'}
+            minH={{ base: '44px', md: 'auto' }}
+          >
+            <Text
+              fontSize="sm"
+              fontWeight={active ? 'semibold' : 'normal'}
+              noOfLines={1}
+            >
+              {kb.name}
+            </Text>
+            <Text fontSize="xs" color="gray.500" noOfLines={1}>
+              {kb.doc_count} 文档 · {kb.chunk_count} chunks
+            </Text>
+          </Box>
+          {canDelete && (
+            <Tooltip label="删除知识库" placement="top">
+              <IconButton
+                aria-label="删除"
+                icon={<DeleteIcon />}
+                size="xs"
+                variant="ghost"
+                colorScheme="red"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setPendingDelete(kb)
+                  onDeleteOpen()
+                }}
+                minW={{ base: '44px', md: 'auto' }}
+                minH={{ base: '44px', md: 'auto' }}
+              />
+            </Tooltip>
+          )}
+        </HStack>
+      </ListItem>
+    )
+  }
+
   return (
     <Box
       w={isMobile ? 'full' : { md: '240px', lg: '280px' }}
@@ -119,59 +182,35 @@ export function KnowledgeBaseSidebar({
         </Text>
       ) : (
         <List spacing={1}>
-          {kbs.map((kb) => {
-            const active = kb.id === activeId
-            return (
-              <ListItem key={kb.id}>
-                <HStack
-                  spacing={1}
-                  bg={active ? 'brand.50' : 'transparent'}
-                  borderRadius="md"
-                  _hover={{ bg: active ? 'brand.50' : 'gray.100' }}
-                  pr={1}
-                  minH={{ base: '44px', md: 'auto' }}
-                >
-                  <Box
-                    flex={1}
-                    px={3}
-                    py={2}
-                    cursor="pointer"
-                    onClick={() => goKB(kb.id)}
-                    borderLeft="3px solid"
-                    borderLeftColor={active ? 'brand.500' : 'transparent'}
-                    minH={{ base: '44px', md: 'auto' }}
-                  >
-                    <Text
-                      fontSize="sm"
-                      fontWeight={active ? 'semibold' : 'normal'}
-                      noOfLines={1}
-                    >
-                      {kb.name}
-                    </Text>
-                    <Text fontSize="xs" color="gray.500" noOfLines={1}>
-                      {kb.doc_count} 文档 · {kb.chunk_count} chunks
-                    </Text>
-                  </Box>
-                  <Tooltip label="删除知识库" placement="top">
-                    <IconButton
-                      aria-label="删除"
-                      icon={<DeleteIcon />}
-                      size="xs"
-                      variant="ghost"
-                      colorScheme="red"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setPendingDelete(kb)
-                        onDeleteOpen()
-                      }}
-                      minW={{ base: '44px', md: 'auto' }}
-                      minH={{ base: '44px', md: 'auto' }}
-                    />
-                  </Tooltip>
-                </HStack>
-              </ListItem>
-            )
-          })}
+          {myKBs.length > 0 && (
+            <>
+              <Text
+                fontSize="xs"
+                fontWeight="semibold"
+                color="gray.400"
+                px={3}
+                py={1}
+              >
+                我的 ({myKBs.length})
+              </Text>
+              {myKBs.map((kb) => renderKBItem(kb, true))}
+            </>
+          )}
+          {sharedKBs.length > 0 && (
+            <>
+              <Text
+                fontSize="xs"
+                fontWeight="semibold"
+                color="gray.400"
+                px={3}
+                py={1}
+                mt={myKBs.length > 0 ? 2 : 0}
+              >
+                共享给我 ({sharedKBs.length})
+              </Text>
+              {sharedKBs.map((kb) => renderKBItem(kb, false))}
+            </>
+          )}
         </List>
       )}
 

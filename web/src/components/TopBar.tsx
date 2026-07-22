@@ -18,6 +18,7 @@ import {
   ExternalLinkIcon,
   HamburgerIcon,
   LockIcon,
+  SettingsIcon,
 } from '@chakra-ui/icons'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
@@ -115,6 +116,14 @@ export function TopBar({
             >
               修改密码
             </MenuItem>
+            {user?.role === 'admin' && (
+              <MenuItem
+                icon={<SettingsIcon />}
+                onClick={() => navigate('/admin/users')}
+              >
+                用户管理
+              </MenuItem>
+            )}
             <MenuItem
               icon={<ExternalLinkIcon />}
               color="red.500"
