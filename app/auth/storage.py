@@ -135,12 +135,16 @@ class UserStore:
             self._initialized = True
 
     def _ensure_owner_columns(self, conn: sqlite3.Connection) -> None:
-        """Add owner_id / is_public / user_id columns to existing tables.
+        """Add owner_id / is_shared / user_id columns to existing tables.
 
         Uses ``PRAGMA table_info`` to detect presence so re-running the
         migration on a DB that already has them is a no-op. Skips
         silently if the target tables don't exist yet -- the KB layer
         will create them on its own ``init()``.
+
+        The KB layer is the canonical owner of the schema now (it
+        ships the ``is_shared`` column and the legacy ``is_public``
+        mirror); this method only adds the auth columns it owns.
         """
         existing_tables = {
             row[0]
@@ -158,10 +162,6 @@ class UserStore:
             if "owner_id" not in existing_kb:
                 conn.execute(
                     "ALTER TABLE knowledge_bases ADD COLUMN owner_id TEXT"
-                )
-            if "is_public" not in existing_kb:
-                conn.execute(
-                    "ALTER TABLE knowledge_bases ADD COLUMN is_public INTEGER DEFAULT 0"
                 )
 
         if "documents" in existing_tables:
@@ -346,34 +346,85 @@ class UserStore:
             )
             conn.commit()
 
-    def set_kb_visibility(self, kb_id: str, is_public: bool) -> None:
+    def set_kb_visibility(
+        self,
+        kb_id: str,
+        is_shared: Optional[bool] = None,
+        is_public: Optional[bool] = None,
+    ) -> None:
+        """Toggle a KB's visibility flag.
+
+        The new, accurate name is ``is_shared`` (a member-shared KB is
+        visible to every signed-in user, not to anonymous readers).
+        The legacy ``is_public`` keyword is still accepted for
+        backwards compatibility with old callers and tests; when
+        both are passed, ``is_shared`` wins.
+        """
         self.init()
+        if is_shared is None:
+            is_shared = bool(is_public) if is_public is not None else False
+        flag = 1 if is_shared else 0
         with self._lock, self._connect() as conn:
-            conn.execute(
-                "UPDATE knowledge_bases SET is_public = ? WHERE id = ?",
-                (1 if is_public else 0, kb_id),
-            )
+            # Keep both ``is_shared`` and the legacy ``is_public``
+            # mirror in lock-step so older SQL queries that still
+            # reference ``is_public`` keep returning the same value.
+            try:
+                conn.execute(
+                    "UPDATE knowledge_bases SET is_shared = ?, is_public = ? "
+                    "WHERE id = ?",
+                    (flag, flag, kb_id),
+                )
+            except sqlite3.OperationalError:
+                # Pre-migration DBs without the new column at all:
+                # fall back to the old single-column write. The
+                # ``SQLiteStorage._ensure_auth_columns`` migration
+                # adds the new column on the next boot.
+                conn.execute(
+                    "UPDATE knowledge_bases SET is_public = ? WHERE id = ?",
+                    (flag, kb_id),
+                )
             conn.commit()
 
     def get_kb_owner_and_visibility(
         self, kb_id: str
     ) -> Optional[tuple]:
-        """Return ``(owner_id, is_public)`` for ``kb_id`` or None."""
+        """Return ``(owner_id, is_shared)`` for ``kb_id`` or None.
+
+        Falls back to ``is_public`` if the new column is missing
+        (legacy DBs pre-migration).
+        """
         self.init()
         with self._lock, self._connect() as conn:
+            cols = {
+                row[1]
+                for row in conn.execute(
+                    "PRAGMA table_info(knowledge_bases)"
+                ).fetchall()
+            }
+            if "is_shared" in cols:
+                row = conn.execute(
+                    "SELECT owner_id, is_shared FROM knowledge_bases "
+                    "WHERE id = ?",
+                    (kb_id,),
+                ).fetchone()
+                if row is None:
+                    return None
+                return (row["owner_id"], bool(row["is_shared"] or 0))
             row = conn.execute(
                 "SELECT owner_id, is_public FROM knowledge_bases WHERE id = ?",
                 (kb_id,),
             ).fetchone()
             if row is None:
                 return None
-            return (row["owner_id"], bool(row["is_public"]))
+            return (row["owner_id"], bool(row["is_public"] or 0))
 
     def list_kbs_visible_to(self, user_id: str, is_admin: bool) -> List[str]:
         """Return kb_ids the user is allowed to see.
 
         Admins see all KBs; members see their own KBs plus
-        ``is_public=True`` ones.
+        ``is_shared=1`` ones. The legacy ``is_public`` column is
+        still consulted as a fallback so the visibility filter
+        remains correct during the cutover window.
         """
         self.init()
         with self._lock, self._connect() as conn:
@@ -383,7 +434,8 @@ class UserStore:
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id FROM knowledge_bases WHERE owner_id = ? OR is_public = 1 "
+                    "SELECT id FROM knowledge_bases "
+                    "WHERE owner_id = ? OR is_shared = 1 OR is_public = 1 "
                     "ORDER BY created_at DESC, rowid DESC",
                     (user_id,),
                 ).fetchall()

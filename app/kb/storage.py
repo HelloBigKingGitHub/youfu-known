@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     name         TEXT NOT NULL UNIQUE,
     description  TEXT DEFAULT '',
     owner_id     TEXT,
-    is_public    INTEGER DEFAULT 0,
+    is_shared    INTEGER DEFAULT 0,
     created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     doc_count    INTEGER DEFAULT 0,
     chunk_count  INTEGER DEFAULT 0
@@ -99,6 +99,8 @@ CREATE_INDEX_SQL = (
     "CREATE INDEX IF NOT EXISTS idx_documents_kb ON documents(kb_id);\n"
     "CREATE INDEX IF NOT EXISTS idx_chat_turns_kb_time "
     "ON chat_turns(kb_id, created_at DESC);\n"
+    "CREATE INDEX IF NOT EXISTS idx_chat_turns_user "
+    "ON chat_turns(user_id, created_at DESC);\n"
     "CREATE INDEX IF NOT EXISTS idx_chunks_doc ON chunks(doc_id);\n"
     "CREATE INDEX IF NOT EXISTS idx_chunks_kb ON chunks(kb_id);\n"
 )
@@ -121,6 +123,22 @@ def _row_to_kb(row: sqlite3.Row) -> KnowledgeBase:
             created_at = datetime.fromisoformat(created_at)
         except ValueError:
             created_at = datetime.utcnow()
+    # New schema uses ``is_shared``; legacy DBs may have ``is_public``.
+    # The migration backfills ``is_shared`` from ``is_public``, so a
+    # missing ``is_shared`` falls back to the old column. Once both
+    # columns are present, ``is_shared`` is authoritative.
+    try:
+        is_shared_val = row["is_shared"]
+    except (IndexError, KeyError):
+        is_shared_val = None
+    try:
+        is_public_val = row["is_public"]
+    except (IndexError, KeyError):
+        is_public_val = None
+    is_shared_flag = bool(is_shared_val or 0)
+    # If is_shared column is missing entirely, mirror from is_public.
+    if is_shared_val is None and is_public_val is not None:
+        is_shared_flag = bool(is_public_val or 0)
     return KnowledgeBase(
         id=row["id"],
         name=row["name"],
@@ -129,7 +147,9 @@ def _row_to_kb(row: sqlite3.Row) -> KnowledgeBase:
         doc_count=int(row["doc_count"] or 0),
         chunk_count=int(row["chunk_count"] or 0),
         owner_id=row["owner_id"],
-        is_public=bool(row["is_public"] or 0),
+        is_shared=is_shared_flag,
+        # Deprecated mirror kept for backwards-compatible API responses.
+        is_public=is_shared_flag,
     )
 
 
@@ -181,6 +201,12 @@ def _row_to_chat_turn(row: sqlite3.Row) -> ChatTurn:
     except json.JSONDecodeError:
         citations_data = []
     citations = [Citation(**c) for c in citations_data if isinstance(c, dict)]
+    # ``user_id`` is required by the model. The orphan-row migration
+    # stamps NULLs to the bootstrap admin at startup, so post-migration
+    # this is always set; we fall back to "" only as a defensive
+    # last-resort so legacy rows don't blow up the row factory.
+    user_id_raw = row["user_id"]
+    user_id = user_id_raw if user_id_raw else ""
     return ChatTurn(
         id=row["id"],
         kb_id=row["kb_id"],
@@ -189,7 +215,7 @@ def _row_to_chat_turn(row: sqlite3.Row) -> ChatTurn:
         error=row["error"] or "",
         citations=citations,
         status=row["status"],
-        user_id=row["user_id"],
+        user_id=user_id,
         created_at=_parse_dt(row["created_at"]),
         latency_ms=int(row["latency_ms"] or 0),
     )
@@ -256,6 +282,16 @@ class SQLiteStorage:
         exists, so DBs provisioned before the auth module shipped would
         miss the new columns. ``PRAGMA table_info`` lets us detect this
         and patch in the missing columns. Safe to re-run.
+
+        Visibility migration: pre-shared-release builds used ``is_public``;
+        the new model calls the same column ``is_shared`` for accuracy.
+        We add ``is_shared`` if it's missing, then backfill it from
+        ``is_public`` (if present) so existing rows keep the same
+        visibility behaviour. Once both columns are present, only
+        ``is_shared`` is written going forward; ``is_public`` is kept
+        as a read-only mirror for backwards compatibility on the SQL
+        side (the HTTP API still exposes both flags with the same
+        value).
         """
         existing_tables = {
             row[0]
@@ -272,7 +308,23 @@ class SQLiteStorage:
             }
             if "owner_id" not in cols:
                 conn.execute("ALTER TABLE knowledge_bases ADD COLUMN owner_id TEXT")
+            if "is_shared" not in cols:
+                conn.execute(
+                    "ALTER TABLE knowledge_bases ADD COLUMN is_shared INTEGER DEFAULT 0"
+                )
+            # Backfill from the legacy is_public column. We only stamp
+            # rows that haven't been migrated yet (is_shared=0 AND
+            # is_public=1) to keep this safe to re-run.
+            if "is_public" in cols:
+                conn.execute(
+                    "UPDATE knowledge_bases SET is_shared = is_public "
+                    "WHERE is_shared = 0 AND is_public = 1"
+                )
             if "is_public" not in cols:
+                # New DBs that only ever had is_shared; nothing to do.
+                # Older DBs that still need it for legacy code paths get
+                # a zeroed mirror added so SELECT * doesn't change shape
+                # for callers that read both columns.
                 conn.execute(
                     "ALTER TABLE knowledge_bases ADD COLUMN is_public INTEGER DEFAULT 0"
                 )
@@ -494,6 +546,11 @@ class SQLiteStorage:
     def save_chat_turn(self, turn: ChatTurn) -> ChatTurn:
         """Persist a chat turn. Caller is expected to have set ``turn.id``."""
         self.init()
+        if not turn.user_id:
+            # The model now requires ``user_id``. Surface a loud error
+            # rather than writing a row that breaks the per-user
+            # chat-history view downstream.
+            raise ValueError("chat_turn.user_id is required")
         citations_json = json.dumps(
             [c.model_dump() for c in turn.citations], ensure_ascii=False
         )
@@ -501,7 +558,7 @@ class SQLiteStorage:
             conn.execute(
                 "INSERT OR REPLACE INTO chat_turns "
                 "(id, kb_id, question, answer, error, citations_json, status, "
-                " latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " user_id, latency_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     turn.id,
                     turn.kb_id,
@@ -510,6 +567,7 @@ class SQLiteStorage:
                     turn.error or "",
                     citations_json,
                     turn.status,
+                    turn.user_id,
                     int(turn.latency_ms or 0),
                 ),
             )
@@ -519,8 +577,17 @@ class SQLiteStorage:
             ).fetchone()
             return _row_to_chat_turn(row)
 
-    def list_chat_turns(self, kb_id: str, limit: int = 50) -> List[ChatTurn]:
-        """List chat turns for a KB, newest first.
+    def list_chat_turns(
+        self,
+        kb_id: str,
+        limit: int = 50,
+        user_id: Optional[str] = None,
+    ) -> List[ChatTurn]:
+        """List chat turns for ``kb_id``, newest first.
+
+        If ``user_id`` is provided, turns are scoped to that user; an
+        empty list is returned when they have no rows. Pass ``None`` to
+        fetch every turn in the KB (admin-only audit path).
 
         ``limit`` is clamped to ``[1, 500]`` to prevent pathological
         queries from a buggy client.
@@ -528,44 +595,119 @@ class SQLiteStorage:
         self.init()
         lim = max(1, min(int(limit or 50), 500))
         with self._lock, self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM chat_turns WHERE kb_id = ? "
-                "ORDER BY created_at DESC, rowid DESC LIMIT ?",
-                (kb_id, lim),
-            ).fetchall()
+            if user_id is None:
+                rows = conn.execute(
+                    "SELECT * FROM chat_turns WHERE kb_id = ? "
+                    "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                    (kb_id, lim),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM chat_turns WHERE kb_id = ? AND user_id = ? "
+                    "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                    (kb_id, user_id, lim),
+                ).fetchall()
             return [_row_to_chat_turn(r) for r in rows]
 
-    def get_chat_turn(self, kb_id: str, turn_id: str) -> Optional[ChatTurn]:
+    def get_chat_turn(
+        self,
+        kb_id: str,
+        turn_id: str,
+        user_id: Optional[str] = None,
+    ) -> Optional[ChatTurn]:
+        """Fetch a single chat turn.
+
+        When ``user_id`` is provided, the lookup is scoped to that user
+        and a row that exists under a different user is treated as not
+        found (no information leakage across users).
+        """
         self.init()
         with self._lock, self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM chat_turns WHERE id = ? AND kb_id = ?",
-                (turn_id, kb_id),
-            ).fetchone()
+            if user_id is None:
+                row = conn.execute(
+                    "SELECT * FROM chat_turns WHERE id = ? AND kb_id = ?",
+                    (turn_id, kb_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM chat_turns WHERE id = ? AND kb_id = ? "
+                    "AND user_id = ?",
+                    (turn_id, kb_id, user_id),
+                ).fetchone()
             return _row_to_chat_turn(row) if row else None
 
-    def delete_chat_turn(self, kb_id: str, turn_id: str) -> bool:
+    def delete_chat_turn(
+        self,
+        kb_id: str,
+        turn_id: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Delete a chat turn.
+
+        When ``user_id`` is set, the row must also match that user --
+        otherwise the delete is silently skipped. Pass ``None`` for an
+        admin-style unfiltered delete.
+        """
         self.init()
         with self._lock, self._connect() as conn:
-            cur = conn.execute(
-                "DELETE FROM chat_turns WHERE id = ? AND kb_id = ?",
-                (turn_id, kb_id),
-            )
+            if user_id is None:
+                cur = conn.execute(
+                    "DELETE FROM chat_turns WHERE id = ? AND kb_id = ?",
+                    (turn_id, kb_id),
+                )
+            else:
+                cur = conn.execute(
+                    "DELETE FROM chat_turns WHERE id = ? AND kb_id = ? "
+                    "AND user_id = ?",
+                    (turn_id, kb_id, user_id),
+                )
             conn.commit()
             return cur.rowcount > 0
 
-    def clear_chat_turns(self, kb_id: str) -> int:
-        """Delete every chat turn belonging to ``kb_id``.
+    def clear_chat_turns(
+        self,
+        kb_id: str,
+        user_id: Optional[str] = None,
+    ) -> int:
+        """Delete chat turns belonging to ``kb_id``.
+
+        When ``user_id`` is set, only that user's turns are removed; pass
+        ``None`` to wipe every user's turns under the KB (admin path).
 
         Returns the number of rows removed.
         """
         self.init()
         with self._lock, self._connect() as conn:
-            cur = conn.execute(
-                "DELETE FROM chat_turns WHERE kb_id = ?", (kb_id,)
-            )
+            if user_id is None:
+                cur = conn.execute(
+                    "DELETE FROM chat_turns WHERE kb_id = ?", (kb_id,)
+                )
+            else:
+                cur = conn.execute(
+                    "DELETE FROM chat_turns WHERE kb_id = ? AND user_id = ?",
+                    (kb_id, user_id),
+                )
             conn.commit()
             return int(cur.rowcount or 0)
+
+    def list_chat_turns_for_user(
+        self,
+        user_id: str,
+        limit: int = 200,
+    ) -> List[ChatTurn]:
+        """List every chat turn owned by ``user_id`` across all KBs.
+
+        Used by the admin audit endpoint (``/api/admin/users/{id}/chats``).
+        """
+        self.init()
+        lim = max(1, min(int(limit or 200), 1000))
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM chat_turns WHERE user_id = ? "
+                "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (user_id, lim),
+            ).fetchall()
+            return [_row_to_chat_turn(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Chunks (chunk-level metadata mirror)

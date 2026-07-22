@@ -116,9 +116,16 @@ def test_assigns_orphan_chat_to_admin(sqlite_storage: SQLiteStorage) -> None:
         question="hi",
         answer="hello",
         status="ready",
+        user_id="placeholder",  # required at construction; cleared by SQL below
         created_at=_utcnow(),
     )
     sqlite_storage.save_chat_turn(turn)
+    # Force the user_id to NULL so the migration actually has work to do.
+    with sqlite_storage._connect() as conn:  # type: ignore[attr-defined]
+        conn.execute(
+            "UPDATE chat_turns SET user_id = NULL WHERE id = ?", (turn.id,)
+        )
+        conn.commit()
 
     fixed = assign_orphan_chats_to_admin(sqlite_storage, "admin-1")
     assert fixed == 1
@@ -135,14 +142,10 @@ def test_leaves_owned_chats_alone(sqlite_storage: SQLiteStorage) -> None:
         question="hi",
         answer="hello",
         status="ready",
+        user_id="alice",  # pre-stamped so the migration leaves it alone
         created_at=_utcnow(),
     )
     sqlite_storage.save_chat_turn(turn)
-    with sqlite_storage._connect() as conn:  # type: ignore[attr-defined]
-        conn.execute(
-            "UPDATE chat_turns SET user_id = ? WHERE id = ?", ("alice", turn.id)
-        )
-        conn.commit()
 
     fixed = assign_orphan_chats_to_admin(sqlite_storage, "admin-1")
     assert fixed == 0
@@ -160,9 +163,15 @@ def test_orphan_chat_assignment_is_idempotent(
         question="hi",
         answer="hello",
         status="ready",
+        user_id="placeholder",
         created_at=_utcnow(),
     )
     sqlite_storage.save_chat_turn(turn)
+    with sqlite_storage._connect() as conn:  # type: ignore[attr-defined]
+        conn.execute(
+            "UPDATE chat_turns SET user_id = NULL WHERE id = ?", (turn.id,)
+        )
+        conn.commit()
 
     assert assign_orphan_chats_to_admin(sqlite_storage, "admin-1") == 1
     assert assign_orphan_chats_to_admin(sqlite_storage, "admin-1") == 0
@@ -179,9 +188,15 @@ def test_assigns_both_kb_and_chat_in_one_pass(
         question="hi",
         answer="hello",
         status="ready",
+        user_id="placeholder",
         created_at=_utcnow(),
     )
     sqlite_storage.save_chat_turn(turn)
+    with sqlite_storage._connect() as conn:  # type: ignore[attr-defined]
+        conn.execute(
+            "UPDATE chat_turns SET user_id = NULL WHERE id = ?", (turn.id,)
+        )
+        conn.commit()
 
     assert assign_orphan_kbs_to_admin(sqlite_storage, "admin-1") == 1
     assert assign_orphan_chats_to_admin(sqlite_storage, "admin-1") == 1

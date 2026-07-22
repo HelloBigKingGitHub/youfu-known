@@ -17,7 +17,13 @@ from app.kb.models import ChatTurn, Citation
 # ---------------------------------------------------------------------------
 
 
-def _make_turn(kb_id: str, qid: str, *, status: str = "ready") -> ChatTurn:
+def _make_turn(
+    kb_id: str,
+    qid: str,
+    *,
+    status: str = "ready",
+    user_id: str = "tester",
+) -> ChatTurn:
     return ChatTurn(
         id=qid,
         kb_id=kb_id,
@@ -36,6 +42,7 @@ def _make_turn(kb_id: str, qid: str, *, status: str = "ready") -> ChatTurn:
             )
         ],
         status=status,
+        user_id=user_id,
         created_at=datetime.utcnow(),
         latency_ms=42,
     )

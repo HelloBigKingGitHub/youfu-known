@@ -24,6 +24,9 @@ class KnowledgeBaseUpdate(BaseModel):
 
     name: Optional[str] = Field(default=None, min_length=1, max_length=128)
     description: Optional[str] = Field(default=None, max_length=1024)
+    is_shared: Optional[bool] = Field(default=None)
+    # Deprecated alias kept for backwards compat with older clients.
+    # When set, mirrors ``is_shared``.
     is_public: Optional[bool] = Field(default=None)
 
 

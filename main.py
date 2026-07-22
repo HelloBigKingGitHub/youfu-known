@@ -277,6 +277,8 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(documents_router.router)
     app.include_router(chat_router.router)
     app.include_router(chat_history_router.router)
+    # Per-user chat history audit endpoints (admin-only).
+    app.include_router(chat_history_router.admin_audit_router)
 
 
 # ---------------------------------------------------------------------------

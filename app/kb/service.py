@@ -79,7 +79,7 @@ class KBService:
         name: str,
         description: str = "",
         owner_id: Optional[str] = None,
-        is_public: bool = False,
+        is_shared: bool = False,
     ) -> KnowledgeBase:
         name = (name or "").strip()
         if not name:
@@ -88,27 +88,31 @@ class KBService:
         # Stamp ownership + visibility via the user store (owns the auth
         # schema migrations). Doing it through SQLiteStorage would work
         # too, but keeping it here avoids a circular import.
-        self._stamp_kb_ownership(kb.id, owner_id, is_public)
+        self._stamp_kb_ownership(kb.id, owner_id, is_shared)
         # Pre-create the empty Chroma collection so upload later is fast.
         self._vectorstore.get_or_create(kb.id, dim=self._embedder.dim)
         # Pre-create the per-KB upload directory so cleanup is straightforward.
         self._upload_dir_for_kb(kb.id).mkdir(parents=True, exist_ok=True)
-        # Re-read so the returned KB carries the owner / public flags.
+        # Re-read so the returned KB carries the owner / shared flags.
         refreshed = self._storage.get_kb(kb.id)
         return refreshed or kb
 
     def _stamp_kb_ownership(
-        self, kb_id: str, owner_id: Optional[str], is_public: bool
+        self, kb_id: str, owner_id: Optional[str], is_shared: bool
     ) -> None:
-        """Write owner_id + is_public straight to the SQLite row.
+        """Write owner_id + is_shared straight to the SQLite row.
 
-        Uses the storage's own connection (no extra UserStore instance)
-        to keep the path zero-allocation in the hot create path.
+        Both ``is_shared`` (authoritative) and the legacy ``is_public``
+        mirror column are kept in lock-step so legacy SQL callers and
+        the backwards-compatible HTTP payload (``is_public`` alias)
+        agree without an extra round trip.
         """
+        flag = 1 if is_shared else 0
         with self._storage._connect() as conn:  # type: ignore[attr-defined]
             conn.execute(
-                "UPDATE knowledge_bases SET owner_id = ?, is_public = ? WHERE id = ?",
-                (owner_id, 1 if is_public else 0, kb_id),
+                "UPDATE knowledge_bases SET owner_id = ?, is_shared = ?, "
+                "is_public = ? WHERE id = ?",
+                (owner_id, flag, flag, kb_id),
             )
             conn.commit()
 
@@ -121,7 +125,9 @@ class KBService:
         """Return KBs the user is allowed to see.
 
         Admins see all; members see their own KBs plus any
-        ``is_public=True`` KB.
+        ``is_shared=True`` KB (shared is the new word for
+        "public" in the per-user model: visible to every signed-in
+        user, not to anonymous readers).
         """
         all_kbs = self._storage.list_kbs()
         if is_admin:
@@ -134,7 +140,7 @@ class KBService:
         with self._storage._connect() as conn:  # type: ignore[attr-defined]
             rows = conn.execute(
                 "SELECT id FROM knowledge_bases "
-                "WHERE owner_id = ? OR is_public = 1",
+                "WHERE owner_id = ? OR is_shared = 1 OR is_public = 1",
                 (user_id,),
             ).fetchall()
             return {r["id"] for r in rows}
@@ -149,15 +155,25 @@ class KBService:
     def kb_owner_and_visibility(
         self, kb_id: str
     ) -> Optional[tuple]:
-        """Return ``(owner_id, is_public)`` for ``kb_id`` (or None)."""
+        """Return ``(owner_id, is_shared)`` for ``kb_id`` (or None).
+
+        ``is_shared`` is authoritative; ``is_public`` (the legacy alias)
+        is treated as the same flag so existing call sites that expect
+        it keep working.
+        """
         with self._storage._connect() as conn:  # type: ignore[attr-defined]
             row = conn.execute(
-                "SELECT owner_id, is_public FROM knowledge_bases WHERE id = ?",
+                "SELECT owner_id, is_shared, is_public FROM knowledge_bases WHERE id = ?",
                 (kb_id,),
             ).fetchone()
             if row is None:
                 return None
-            return (row["owner_id"], bool(row["is_public"]))
+            keys = row.keys() if hasattr(row, "keys") else []
+            if "is_shared" in keys:
+                flag = bool(row["is_shared"] or 0)
+            else:
+                flag = bool(row["is_public"] or 0)
+            return (row["owner_id"], flag)
 
     def user_can_read_kb(
         self, kb_id: str, user_id: str, is_admin: bool
@@ -167,8 +183,8 @@ class KBService:
         info = self.kb_owner_and_visibility(kb_id)
         if info is None:
             return False
-        owner_id, is_public = info
-        return is_public or owner_id == user_id
+        owner_id, is_shared = info
+        return is_shared or owner_id == user_id
 
     def user_can_write_kb(
         self, kb_id: str, user_id: str, is_admin: bool
@@ -186,16 +202,21 @@ class KBService:
         kb_id: str,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        is_public: Optional[bool] = None,
+        is_shared: Optional[bool] = None,
     ) -> KnowledgeBase:
         kb = self._storage.update_kb(kb_id, name=name, description=description)
         if kb is None:
             raise KBNotFoundError(f"knowledge base not found: {kb_id}")
-        if is_public is not None:
+        if is_shared is not None:
+            flag = 1 if is_shared else 0
             with self._storage._connect() as conn:  # type: ignore[attr-defined]
+                # Keep the legacy ``is_public`` column in sync so
+                # older code paths (raw SQL queries, dashboards) that
+                # read either column continue to agree.
                 conn.execute(
-                    "UPDATE knowledge_bases SET is_public = ? WHERE id = ?",
-                    (1 if is_public else 0, kb_id),
+                    "UPDATE knowledge_bases SET is_shared = ?, is_public = ? "
+                    "WHERE id = ?",
+                    (flag, flag, kb_id),
                 )
                 conn.commit()
             kb = self._storage.get_kb(kb_id) or kb

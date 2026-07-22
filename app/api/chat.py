@@ -24,7 +24,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.api import ok
 from app.auth.deps import get_current_user
 from app.auth.models import User, UserRole
-from app.auth.storage import UserStore
 from app.deps import get_retriever, get_kb_service
 from app.kb.models import (
     ChatRequest,
@@ -88,13 +87,19 @@ def _persist_turn(
     result_or_none,
     error: str,
     latency_ms: int,
-    user_id: Optional[str] = None,
+    user_id: str,
 ) -> None:
     """Write a chat_turns row mirroring the latest ``/chat`` outcome.
 
     Best-effort: any failure inside the storage layer is logged and
     swallowed so it never breaks the API contract (the caller still
     gets a JSON response for a successful LLM call).
+
+    ``user_id`` is required: per-user chat history isolation means
+    a row without an owner breaks the storage layer's invariant and
+    would leak into the per-user view. We surface a loud log so a
+    caller that forgot to pass the user is easy to spot in
+    production traces.
     """
     storage = getattr(request.app.state, "storage", None)
     if storage is None:
@@ -107,6 +112,17 @@ def _persist_turn(
         )
         answer = result_or_none.answer if result_or_none is not None else ""
         status = "ready" if result_or_none is not None else "failed"
+        # ``user_id`` is now part of the persisted row at insert time
+        # (the per-user isolation model), so the post-save tagging
+        # path that previously lived in the auth layer is gone. The
+        # chat endpoint always passes ``user.id``; we treat empty
+        # values as a programming error rather than silently stamp
+        # the row to "" (which the storage layer would reject anyway).
+        if not user_id:
+            raise ValueError(
+                "_persist_turn called without a user_id; chat history "
+                "isolation requires every turn to be attributed"
+            )
         turn = ChatTurn(
             id=uuid.uuid4().hex,
             kb_id=kb_id,
@@ -115,25 +131,11 @@ def _persist_turn(
             error=error or "",
             citations=citations,
             status=status,
+            user_id=user_id,
             created_at=datetime.now(timezone.utc).replace(tzinfo=None),
             latency_ms=int(latency_ms or 0),
         )
         storage.save_chat_turn(turn)
-        # Tag the turn with the user who asked so the chat history
-        # endpoint can attribute rows correctly. Best-effort: ignore
-        # failures so the chat response itself still goes out.
-        if user_id:
-            try:
-                store = UserStore(
-                    request.app.state.settings, db_path=storage.db_path
-                )
-                store.set_chat_turn_user(turn.id, user_id)
-            except Exception:  # noqa: BLE001
-                import logging
-
-                logging.getLogger(__name__).exception(
-                    "Failed to tag chat turn %s with user", turn.id
-                )
     except Exception:  # noqa: BLE001 -- persistence must not break chat
         import logging
 

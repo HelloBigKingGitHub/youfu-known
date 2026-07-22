@@ -43,7 +43,10 @@ class KnowledgeBase(BaseModel):
     doc_count: int = 0
     chunk_count: int = 0
     owner_id: Optional[str] = None
-    is_public: bool = False
+    is_shared: bool = False
+    # Deprecated alias kept for backwards-compatible API responses.
+    # Always mirrors ``is_shared``; new clients should read ``is_shared``.
+    is_public: Optional[bool] = None
 
 
 class Document(BaseModel):
@@ -116,6 +119,11 @@ class ChatTurn(BaseModel):
 
     Mirrors the ``chat_turns`` table. ``citations`` is stored as JSON
     inside ``citations_json`` so we don't need a separate join table.
+
+    ``user_id`` is the authenticated user that asked the question. The
+    chat history endpoint filters on it so that turns are isolated per
+    user; the orphan-row lifecycle migration stamps any pre-existing
+    NULLs onto the bootstrap admin.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -127,7 +135,7 @@ class ChatTurn(BaseModel):
     error: str = ""
     citations: List[Citation] = Field(default_factory=list)
     status: str  # "ready" | "failed"
-    user_id: Optional[str] = None
+    user_id: str
     created_at: datetime
     latency_ms: int = 0
 

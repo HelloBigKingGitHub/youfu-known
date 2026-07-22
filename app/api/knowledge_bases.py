@@ -28,13 +28,20 @@ router = APIRouter(prefix="/api/kbs", tags=["knowledge_bases"])
 
 
 def _kb_payload(kb) -> dict:
-    """Serialise a :class:`KnowledgeBase` to a JSON-friendly dict."""
+    """Serialise a :class:`KnowledgeBase` to a JSON-friendly dict.
+
+    Both ``is_shared`` (the new, accurate name) and ``is_public`` (the
+    deprecated alias) are returned with the same value so older
+    clients keep working.
+    """
+    is_shared_flag = bool(getattr(kb, "is_shared", False))
     return {
         "id": kb.id,
         "name": kb.name,
         "description": kb.description,
         "owner_id": getattr(kb, "owner_id", None),
-        "is_public": bool(getattr(kb, "is_public", False)),
+        "is_shared": is_shared_flag,
+        "is_public": is_shared_flag,
         "created_at": kb.created_at.isoformat() if kb.created_at else None,
         "doc_count": kb.doc_count,
         "chunk_count": kb.chunk_count,
@@ -91,7 +98,7 @@ async def create_kb(
         name=body.name,
         description=body.description or "",
         owner_id=user.id,
-        is_public=False,
+        is_shared=False,
     )
     return ok(_kb_payload(kb))
 
@@ -115,7 +122,8 @@ async def kb_detail(
     info = svc.kb_owner_and_visibility(kb_id)
     if info is not None:
         enriched["owner_id"] = info[0]
-        enriched["is_public"] = info[1]
+        enriched["is_shared"] = bool(info[1])
+        enriched["is_public"] = bool(info[1])
     return ok(
         {
             "kb": enriched,
@@ -131,20 +139,24 @@ async def rename_kb(
     user: User = Depends(get_current_user),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
-    """Rename / update description / toggle ``is_public``.
+    """Rename / update description / toggle ``is_shared``.
 
-    Only the owner or an admin can mutate a KB.
+    Only the owner or an admin can mutate a KB. The body accepts
+    either ``is_shared`` (preferred) or ``is_public`` (deprecated
+    alias); if both are passed and disagree, ``is_shared`` wins.
     """
     is_admin = user.role == UserRole.ADMIN
     if not svc.user_can_write_kb(kb_id, user.id, is_admin=is_admin):
         raise HTTPException(status_code=403, detail="forbidden")
-    is_public = getattr(body, "is_public", None)
+    is_shared_value = body.is_shared
+    if is_shared_value is None:
+        is_shared_value = body.is_public
     try:
         kb = svc.rename_kb(
             kb_id,
             name=body.name,
             description=body.description,
-            is_public=is_public,
+            is_shared=is_shared_value,
         )
     except KBNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
