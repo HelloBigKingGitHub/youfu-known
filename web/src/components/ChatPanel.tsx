@@ -14,7 +14,7 @@ import {
   useToast,
   VStack,
 } from '@chakra-ui/react'
-import { ArrowUpIcon, DeleteIcon } from '@chakra-ui/icons'
+import { ArrowUpIcon, CloseIcon, DeleteIcon } from '@chakra-ui/icons'
 import { useEffect, useRef, useState } from 'react'
 import type { ChatTurn } from '../types'
 import { api, ApiError } from '../api'
@@ -29,10 +29,35 @@ const MAX_TEXTAREA_HEIGHT = 120
 export function ChatPanel({ kbId }: Props) {
   const [history, setHistory] = useState<ChatTurn[]>([])
   const [question, setQuestion] = useState('')
+  const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const toast = useToast()
+
+  // mount / 切 KB 时拉历史
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    api
+      .listChats(kbId)
+      .then((chats) => {
+        if (!cancelled) {
+          // 后端 DESC, 前端正序展示
+          setHistory(chats.slice().reverse())
+        }
+      })
+      .catch((e) => {
+        const msg = e instanceof ApiError ? e.message : '加载历史失败'
+        toast({ title: '加载历史失败', description: msg, status: 'error' })
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [kbId, toast])
 
   // 自动滚到底部 (除非用户手动向上滚)
   const [autoScroll, setAutoScroll] = useState(true)
@@ -76,27 +101,62 @@ export function ChatPanel({ kbId }: Props) {
     setAutoScroll(true)
     setHistory((h) => [
       ...h,
-      { id: turnId, question: q, answer: '', citations: [], createdAt: Date.now() },
+      {
+        id: turnId,
+        kb_id: kbId,
+        user_id: 'me',
+        question: q,
+        answer: '',
+        error: '',
+        citations: [],
+        status: 'ready',
+        created_at: new Date().toISOString(),
+        latency_ms: 0,
+      },
     ])
 
     try {
-      const resp = await api.chat(kbId, q)
-      setHistory((h) =>
-        h.map((t) =>
-          t.id === turnId
-            ? { ...t, answer: resp.answer, citations: resp.citations }
-            : t,
-        ),
-      )
+      await api.chat(kbId, q)
+      const chats = await api.listChats(kbId)
+      setHistory(chats.slice().reverse())
     } catch (e) {
       const msg = e instanceof ApiError ? e.message : '问答失败'
       setHistory((h) =>
-        h.map((t) => (t.id === turnId ? { ...t, error: msg } : t)),
+        h.map((t) =>
+          t.id === turnId ? { ...t, error: msg, status: 'failed' } : t,
+        ),
       )
-      toast({ title: '问答失败', description: msg, status: 'error', duration: 4000 })
+      toast({
+        title: '问答失败',
+        description: msg,
+        status: 'error',
+        duration: 4000,
+      })
     } finally {
       setSending(false)
       textareaRef.current?.focus()
+    }
+  }
+
+  const handleClear = async () => {
+    if (!window.confirm('清空当前 KB 的所有问答?')) return
+    try {
+      await api.clearChats(kbId)
+      setHistory([])
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : '清空失败'
+      toast({ title: '清空失败', description: msg, status: 'error' })
+    }
+  }
+
+  const handleDelete = async (turnId: string) => {
+    if (!window.confirm('删除这条问答?')) return
+    try {
+      await api.deleteChat(kbId, turnId)
+      setHistory((h) => h.filter((t) => t.id !== turnId))
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : '删除失败'
+      toast({ title: '删除失败', description: msg, status: 'error' })
     }
   }
 
@@ -118,22 +178,23 @@ export function ChatPanel({ kbId }: Props) {
     >
       {/* Header */}
       <Flex justify="space-between" align="center" mb={3}>
-        <Text fontWeight="semibold" color="gray.700">
-          问答
-        </Text>
+        <HStack spacing={2}>
+          <Text fontWeight="semibold" color="gray.700">
+            问答
+          </Text>
+          {loading && <Spinner size="sm" color="brand.500" />}
+        </HStack>
         {history.length > 0 && (
-          <IconButton
-            aria-label="清空问答"
-            icon={<DeleteIcon />}
+          <Button
+            aria-label="清空我的问答"
+            leftIcon={<DeleteIcon />}
             size="xs"
             variant="ghost"
             colorScheme="red"
-            onClick={() => {
-              if (window.confirm('确定清空所有问答记录?')) {
-                setHistory([])
-              }
-            }}
-          />
+            onClick={handleClear}
+          >
+            清空我的问答
+          </Button>
         )}
       </Flex>
 
@@ -151,7 +212,14 @@ export function ChatPanel({ kbId }: Props) {
         p={{ base: 3, md: 4 }}
         position="relative"
       >
-        {history.length === 0 ? (
+        {loading && history.length === 0 ? (
+          <Flex align="center" justify="center" direction="column" py={{ base: 8, md: 10 }} gap={2}>
+            <Spinner size="md" color="brand.500" />
+            <Text color="gray.500" fontSize="sm" textAlign="center">
+              加载历史...
+            </Text>
+          </Flex>
+        ) : history.length === 0 ? (
           <Flex align="center" justify="center" direction="column" py={{ base: 8, md: 10 }} gap={2}>
             <Text fontSize={{ base: '2xl', md: '3xl' }}>💬</Text>
             <Text color="gray.500" fontSize="sm" textAlign="center">
@@ -164,7 +232,24 @@ export function ChatPanel({ kbId }: Props) {
         ) : (
           <VStack align="stretch" spacing={4}>
             {history.map((t) => (
-              <Box key={t.id}>
+              <Box key={t.id} position="relative">
+                {/* 删除按钮 - hover 出现 */}
+                <IconButton
+                  aria-label="删除这条问答"
+                  icon={<CloseIcon boxSize={2} />}
+                  size="xs"
+                  variant="ghost"
+                  colorScheme="red"
+                  position="absolute"
+                  top={0}
+                  left={0}
+                  opacity={0}
+                  _groupHover={{ opacity: 1 }}
+                  sx={{
+                    '.chakra-box:hover &': { opacity: 1 },
+                  }}
+                  onClick={() => handleDelete(t.id)}
+                />
                 {/* 用户问题 - 右对齐蓝色气泡 */}
                 <Flex justify="flex-end" mb={2}>
                   <Box

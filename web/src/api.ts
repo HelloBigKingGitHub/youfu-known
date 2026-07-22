@@ -8,6 +8,7 @@ import type {
   DocumentStatusInfo,
   UploadResult,
   ChatResponse,
+  ChatTurn,
   HealthInfo,
   User,
   LoginResponse,
@@ -242,4 +243,19 @@ export const api = {
         stream: false,
       }),
     }),
+
+  listChats: async (kbId: string) => {
+    const r = await request<ChatTurn[]>(`/api/kbs/${kbId}/chats?limit=50`)
+    return r
+  },
+
+  deleteChat: async (kbId: string, turnId: string) => {
+    return request<void>(`/api/kbs/${kbId}/chats/${turnId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  clearChats: async (kbId: string) => {
+    return request<void>(`/api/kbs/${kbId}/chats`, { method: 'DELETE' })
+  },
 }

@@ -86,12 +86,16 @@ export interface LoginResponse {
   expires_at: number
 }
 
-// 前端内部用的问答历史项
+// 后端 chat_turns 表对应的前端类型
 export interface ChatTurn {
   id: string
+  kb_id: string
+  user_id: string
   question: string
   answer: string
+  error: string
   citations: Citation[]
-  createdAt: number
-  error?: string
+  status: 'ready' | 'failed'
+  created_at: string // ISO
+  latency_ms: number
 }
