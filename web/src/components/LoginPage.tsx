@@ -1,6 +1,6 @@
 // 登录页 - 全屏居中卡片, 移动端优先 (大输入框/大按钮)
 import { useState } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { Link as RouterLink, useNavigate, useLocation } from 'react-router-dom'
 import {
   Box,
   Button,
@@ -11,6 +11,7 @@ import {
   FormLabel,
   Heading,
   Input,
+  Link,
   Stack,
   Text,
   VStack,
@@ -122,6 +123,18 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             >
               登录
             </Button>
+
+            <Text fontSize="sm" color="gray.600" textAlign="center">
+              还没有账号?{' '}
+              <Link
+                as={RouterLink}
+                to="/register"
+                color="brand.600"
+                fontWeight="semibold"
+              >
+                注册
+              </Link>
+            </Text>
 
             <Text fontSize="xs" color="gray.400" textAlign="center">
               个人知识库 · 数据本地存储
