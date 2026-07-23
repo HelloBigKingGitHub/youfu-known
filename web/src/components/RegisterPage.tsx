@@ -1,5 +1,5 @@
-// 注册页 - 全屏居中卡片, 带 Cloudflare Turnstile 防机器人
-import { useEffect, useRef, useState } from 'react'
+// 注册页 - 全屏居中卡片, 带本地随机字符验证码
+import { useState } from 'react'
 import { Link as RouterLink, useNavigate } from 'react-router-dom'
 import {
   Box,
@@ -19,17 +19,7 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import { api } from '../api'
-
-declare global {
-  interface Window {
-    turnstile?: {
-      render: (el: HTMLElement, opts: unknown) => string
-      reset: (widgetId?: string) => void
-      remove: (widgetId?: string) => void
-      getResponse: (widgetId?: string) => string
-    }
-  }
-}
+import { Captcha } from './Captcha'
 
 const USERNAME_RE = /^[a-zA-Z0-9_-]{3,32}$/
 
@@ -39,46 +29,9 @@ export function RegisterPage() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [loading, setLoading] = useState(false)
-  const [turnstileToken, setTurnstileToken] = useState<string | null>(null)
-  const turnstileRef = useRef<HTMLDivElement>(null)
-  const widgetIdRef = useRef<string | null>(null)
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
   const navigate = useNavigate()
   const toast = useToast()
-
-  useEffect(() => {
-    const script = document.createElement('script')
-    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
-    script.async = true
-    script.defer = true
-    document.head.appendChild(script)
-    script.onload = () => {
-      if (window.turnstile && turnstileRef.current) {
-        widgetIdRef.current = window.turnstile.render(
-          turnstileRef.current,
-          {
-            sitekey:
-              import.meta.env.VITE_TURNSTILE_SITE_KEY ||
-              '1x00000000000000000000AA',
-            callback: (token: string) => setTurnstileToken(token),
-            'expired-callback': () => setTurnstileToken(null),
-          },
-        )
-      }
-    }
-    return () => {
-      if (widgetIdRef.current && window.turnstile) {
-        window.turnstile.remove(widgetIdRef.current)
-      }
-      document.head.removeChild(script)
-    }
-  }, [])
-
-  const resetTurnstile = () => {
-    if (widgetIdRef.current && window.turnstile) {
-      window.turnstile.reset(widgetIdRef.current)
-      setTurnstileToken(null)
-    }
-  }
 
   const handleSubmit = async () => {
     if (!username.trim() || !password) return
@@ -100,7 +53,7 @@ export function RegisterPage() {
       })
       return
     }
-    if (!turnstileToken) {
+    if (!captchaToken) {
       toast({
         title: '请先完成人机验证',
         status: 'error',
@@ -111,7 +64,7 @@ export function RegisterPage() {
     }
     setLoading(true)
     try {
-      await api.register(username.trim(), email, password, turnstileToken)
+      await api.register(username.trim(), email, password, captchaToken)
       toast({
         title: '注册成功, 等待管理员批准',
         status: 'success',
@@ -128,7 +81,7 @@ export function RegisterPage() {
         duration: 4000,
         position: 'top',
       })
-      resetTurnstile()
+      setCaptchaToken(null)
     } finally {
       setLoading(false)
     }
@@ -224,10 +177,12 @@ export function RegisterPage() {
                   <FormErrorMessage>两次密码不一致</FormErrorMessage>
                 )}
               </FormControl>
-            </Stack>
 
-            {/* Turnstile widget */}
-            <Box ref={turnstileRef} w="full" />
+              <Box>
+                <FormLabel fontSize="sm">人机验证</FormLabel>
+                <Captcha onChange={setCaptchaToken} />
+              </Box>
+            </Stack>
 
             <Button
               colorScheme="brand"
@@ -236,7 +191,7 @@ export function RegisterPage() {
               onClick={handleSubmit}
               isLoading={loading}
               loadingText="注册中"
-              isDisabled={!turnstileToken}
+              isDisabled={!captchaToken}
             >
               注册
             </Button>
