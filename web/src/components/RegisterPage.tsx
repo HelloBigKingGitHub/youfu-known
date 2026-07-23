@@ -1,4 +1,4 @@
-// 注册页 - 全屏居中卡片, 带本地随机字符验证码
+// 注册页 - 全屏居中卡片 + 随机字符验证码
 import { useState } from 'react'
 import { Link as RouterLink, useNavigate } from 'react-router-dom'
 import {
@@ -29,7 +29,7 @@ export function RegisterPage() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [loading, setLoading] = useState(false)
-  const [captchaToken, setCaptchaToken] = useState<string | null>(null)
+  const [captchaVerified, setCaptchaVerified] = useState(false)
   const navigate = useNavigate()
   const toast = useToast()
 
@@ -53,7 +53,7 @@ export function RegisterPage() {
       })
       return
     }
-    if (!captchaToken) {
+    if (!captchaVerified) {
       toast({
         title: '请先完成人机验证',
         status: 'error',
@@ -64,7 +64,7 @@ export function RegisterPage() {
     }
     setLoading(true)
     try {
-      await api.register(username.trim(), email, password, captchaToken)
+      await api.register(username.trim(), email, password, 'captcha-verified')
       toast({
         title: '注册成功, 等待管理员批准',
         status: 'success',
@@ -81,7 +81,7 @@ export function RegisterPage() {
         duration: 4000,
         position: 'top',
       })
-      setCaptchaToken(null)
+      setCaptchaVerified(false)
     } finally {
       setLoading(false)
     }
@@ -177,11 +177,10 @@ export function RegisterPage() {
                   <FormErrorMessage>两次密码不一致</FormErrorMessage>
                 )}
               </FormControl>
-
-              <Box>
+              <FormControl isRequired>
                 <FormLabel fontSize="sm">人机验证</FormLabel>
-                <Captcha onChange={setCaptchaToken} />
-              </Box>
+                <Captcha onVerify={setCaptchaVerified} />
+              </FormControl>
             </Stack>
 
             <Button
@@ -191,7 +190,7 @@ export function RegisterPage() {
               onClick={handleSubmit}
               isLoading={loading}
               loadingText="注册中"
-              isDisabled={!captchaToken}
+              isDisabled={!captchaVerified}
             >
               注册
             </Button>
