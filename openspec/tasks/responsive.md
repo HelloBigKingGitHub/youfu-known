@@ -1,6 +1,6 @@
 # Task Spec: Responsive Redesign
 
-> **Status**: Dispatching to Kimi (frontend agent)  
+> **Status**: ✅ 已完成 (commits `ddead1a` + `4fe141a` + `2c9b938`) (frontend agent)  
 > **Created**: 2026-07-19  
 > **Dispatcher**: Hermes-M3 (project coordinator)
 
