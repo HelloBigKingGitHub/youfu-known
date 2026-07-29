@@ -107,6 +107,32 @@ CREATE_INDEX_SQL = (
 
 
 # ---------------------------------------------------------------------------
+# Phase PDF-C.2: pdf_cache table (Tesseract OCR + future vision cache)
+# ---------------------------------------------------------------------------
+# New table; **no** existing table is modified. The schema mirrors the
+# docstring on ``app/rag/pdf_cache.py`` and the spec
+# ``openspec/tasks/pdf-parser-c.md`` §"文件结构". The table is owned by
+# ``app/rag/pdf_cache.py`` at runtime (independent SQLite connection
+# to avoid coupling to the KB schema migration). This constant exists
+# so ``init()`` ensures the table is created idempotently the first
+# time the KB store is initialised on a host — that way the on-disk
+# database file is consistent and ``PRAGMA table_info`` queries from
+# ``pdf_cache`` succeed without a race.
+CREATE_PDF_CACHE_SQL = """
+CREATE TABLE IF NOT EXISTS pdf_cache (
+    sha256        TEXT PRIMARY KEY,
+    doc_id        TEXT,
+    page_count    INTEGER,
+    ocr_json      TEXT,
+    vision_json   TEXT,
+    size_bytes    INTEGER,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_pdf_cache_created_at ON pdf_cache(created_at);
+"""
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -270,6 +296,7 @@ class SQLiteStorage:
                     + CREATE_CHAT_TURN_SQL
                     + CREATE_CHUNK_SQL
                     + CREATE_INDEX_SQL
+                    + CREATE_PDF_CACHE_SQL  # Phase PDF-C.2 (new table, no existing table changed)
                 )
                 self._ensure_auth_columns(conn)
                 conn.commit()

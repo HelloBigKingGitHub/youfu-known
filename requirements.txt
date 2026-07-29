@@ -8,6 +8,8 @@ openai==2.6.1
 pypdf==6.1.1
 pymupdf==1.25.5
 pdfplumber==0.11.4
+pytesseract==0.3.13  # Phase PDF-C.2: Tesseract OCR Python wrapper (Tesseract binary installed via scripts/install_pi_pdf.sh)
+Pillow==10.4.0  # Phase PDF-C.2: required by pytesseract for image rendering
 python-docx==1.2.0
 markdown==3.10
 beautifulsoup4==4.14.2

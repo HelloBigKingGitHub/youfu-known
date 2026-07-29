@@ -3,19 +3,32 @@
 Dispatches to a parser based on file extension. The supported set is
 ``{.pdf, .docx, .md, .markdown, .txt, .html, .htm}``.
 
-PDF dispatch (Phase C.1, INC-005 "0 改 runtime" pattern)
---------------------------------------------------------
-``load_document`` accepts an optional ``prefer_v2`` kwarg (default
-``True``) that, for ``.pdf`` only, prefers the new
-``parser_pdf_v2`` (PyMuPDF + pdfplumber) over the original
-``parser_pdf`` (pypdf). The legacy ``PARSERS`` dispatch is unchanged
-and remains the single source of truth for non-PDF formats.
+PDF dispatch (Phase C.1 + C.2, INC-005 "0 改 runtime" pattern)
+---------------------------------------------------------------
+``load_document`` accepts two optional kwargs that, for ``.pdf`` only,
+prefer the new pipelines over the original ``parser_pdf`` (pypdf):
+
+* ``prefer_v2`` (Phase C.1, default ``True``) — try
+  ``parser_pdf_v2`` (PyMuPDF + pdfplumber) first and fall back to the
+  original pypdf parser on failure.
+* ``prefer_ocr`` (Phase C.2, default ``False``) — when ``True``, also
+  call ``pdf_inspector`` and, if the inspector decides the PDF
+  is a scan (``needs_ocr=True``), route the call through
+  ``parser_pdf_ocr`` (Tesseract chi_sim + eng). v2 is still attempted
+  first when ``prefer_v2=True``; OCR is only used as the fallback
+  for the scan case (mirrors the ``pdf_inspector.path="ocr"`` branch
+  in the spec).
+
+The legacy ``PARSERS`` dispatch is unchanged and remains the single
+source of truth for non-PDF formats.
 
 Failure modes:
 - ``prefer_v2=False``  → always the original pypdf path.
 - ``prefer_v2=True`` + ``parser_pdf_v2`` raises → log a warning and
   fall through to the original pypdf path. Callers never see the
   new failure mode.
+- ``prefer_ocr=True`` + Tesseract unavailable or scan inference fails
+  → log a warning and fall through to the original pypdf path.
 """
 
 from __future__ import annotations
@@ -53,7 +66,12 @@ def supported_extensions() -> List[str]:
     return sorted(PARSERS.keys())
 
 
-def load_document(path: str | Path, *, prefer_v2: bool = True) -> List[dict]:
+def load_document(
+    path: str | Path,
+    *,
+    prefer_v2: bool = True,
+    prefer_ocr: bool = False,
+) -> List[dict]:
     """Load ``path`` and return a list of ``{page, text}`` sections.
 
     Raises ``UnsupportedFormat`` when the extension has no parser, and
@@ -64,10 +82,18 @@ def load_document(path: str | Path, *, prefer_v2: bool = True) -> List[dict]:
     path:
         File to load.
     prefer_v2:
-        PDF-only opt-in. When ``True`` (default), try the v2 parser
-        (PyMuPDF + pdfplumber) first and fall back to the original
-        pypdf parser on failure. When ``False``, always use the
-        original parser. Non-PDF formats ignore this flag.
+        PDF-only opt-in (Phase C.1). When ``True`` (default), try the
+        v2 parser (PyMuPDF + pdfplumber) first and fall back to the
+        original pypdf parser on failure. When ``False``, always use
+        the original parser. Non-PDF formats ignore this flag.
+    prefer_ocr:
+        PDF-only opt-in (Phase C.2, default ``False``). When ``True``,
+        call ``pdf_inspector`` after the v2 attempt; if the inspector
+        decides the document is a scan (``needs_ocr=True``), route the
+        call through ``parser_pdf_ocr`` (Tesseract chi_sim + eng).
+        The OCR path is *only* used as the fallback for the scan case
+        — v2 still gets a chance first when ``prefer_v2=True``.
+        Default ``False`` keeps Phase C.1 behavior unchanged.
     """
     p = Path(path)
     ext = detect_ext(p)
@@ -95,6 +121,52 @@ def load_document(path: str | Path, *, prefer_v2: bool = True) -> List[dict]:
         except Exception as exc:
             logger.warning(
                 "parser_pdf_v2 failed for %s: %s; falling back to parser_pdf",
+                p.name,
+                exc,
+            )
+
+    # Phase C.2: PDF OCR dispatch (opt-in). When ``prefer_ocr=True``
+    # and the inspector decides the document is a scan, route through
+    # ``parser_pdf_ocr`` (Tesseract chi_sim + eng). v2 above is still
+    # tried first when ``prefer_v2=True``; this branch is the fallback
+    # for the ``path == "ocr"`` decision in ``pdf_inspector``. Mirrors
+    # INC-005 "0 改 runtime": PARSERS dict is not modified, the new
+    # branch lives entirely inside ``load_document``.
+    if ext == ".pdf" and prefer_ocr:
+        try:
+            from app.rag.pdf_inspector import inspect_pdf  # lazy import
+            from app.rag.parser_pdf_ocr import (  # lazy import
+                PYTESSERACT_AVAILABLE,
+                parse_pdf_ocr,
+            )
+
+            if not PYTESSERACT_AVAILABLE:
+                logger.warning(
+                    "prefer_ocr=True but pytesseract not installed; "
+                    "falling back to parser_pdf"
+                )
+            else:
+                info = inspect_pdf(p)
+                if info.get("needs_ocr"):
+                    logger.info(
+                        "Using OCR for %s (text_ratio=%s, path=%s)",
+                        p.name,
+                        info.get("text_ratio"),
+                        info.get("path"),
+                    )
+                    sections = parse_pdf_ocr(p)
+                    if sections:
+                        return sections
+                    logger.info(
+                        "parser_pdf_ocr returned empty for %s; "
+                        "falling back to parser_pdf",
+                        p.name,
+                    )
+        except FileNotFoundError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "OCR dispatch failed for %s: %s; falling back to parser_pdf",
                 p.name,
                 exc,
             )
