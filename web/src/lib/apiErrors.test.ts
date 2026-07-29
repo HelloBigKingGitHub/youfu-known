@@ -77,6 +77,47 @@ test('extractFieldErrors parses Python repr detail (real FastAPI envelope)', () 
   ])
 })
 
+test('extractFieldErrors handles regex pattern in Python repr (real email case)', () => {
+  // 真实后端捕获: /api/auth/register 400, email="notanemail"
+  // Python repr 字符串里含未转义的反斜杠, 转换后必须是合法 JSON。
+  const detail = "[{'type': 'string_pattern_mismatch', 'loc': ('body', 'email'), 'msg': \"String should match pattern '^$|^[\\\\w.+-]+@[\\\\w-]+\\\\.[\\\\w.-]+'\", 'input': 'notanemail', 'ctx': {'pattern': \"^$|^[\\\\w.+-]+@[\\\\w-]+\\\\.[\\\\w.-]+$\"}}]"
+  const fields = extractFieldErrors(new ApiError(400, 'validation error', detail))
+  expect(fields).toEqual([
+    { field: 'email', message: '邮箱格式不正确' },
+  ])
+})
+
+test('extractFieldErrors combines Pydantic array detail (multi-field case)', () => {
+  // /register 真实多字段: 短密码 + 非法邮箱
+  const detail = JSON.stringify([
+    { type: 'string_too_short', loc: ['body', 'password'], msg: 'X', ctx: { min_length: 8 } },
+    { type: 'string_pattern_mismatch', loc: ['body', 'email'], msg: 'X' },
+  ])
+  const fields = extractFieldErrors(new ApiError(400, 'validation error', detail))
+  expect(fields).toEqual([
+    { field: 'password', message: '密码至少 8 个字符' },
+    { field: 'email', message: '邮箱格式不正确' },
+  ])
+})
+
+test('extractFieldErrors handles Python repr with escaped backslash and unclosed string', () => {
+  // 字面反斜杠: Python ``\\`` 在 repr 里是两个 ``\`` 字符
+  const detail1 = "[{'type': 'string_too_short', 'loc': ('body', 'name'), 'msg': 'Path C:\\\\Users', 'ctx': {'min_length': 1}}]"
+  expect(extractFieldErrors(new ApiError(400, 'x', detail1))).toEqual([
+    { field: 'name', message: '名称至少 1 个字符' },
+  ])
+  // 未闭合字符串: JSON.parse 失败, 应退化为空数组而不是抛错
+  expect(extractFieldErrors(new ApiError(400, 'x', "[{'type': 'x', 'msg': 'unclosed"))).toEqual([])
+})
+
+test('extractFieldErrors uses generic Chinese fallback for unknown Pydantic type', () => {
+  // 真正未知的 Pydantic type 不应该把后端英文 msg 暴露给用户
+  const unknown = JSON.stringify([{ type: 'weird_new_type', loc: ['body', 'foo'], msg: 'EN' }])
+  expect(extractFieldErrors(new ApiError(400, 'x', unknown))).toEqual([
+    { field: 'foo', message: '请求不合法' },
+  ])
+})
+
 test('formatApiError returns one-line Chinese per Pydantic field, joined', () => {
   const e = new ApiError(400, 'validation error', pydanticDetailString)
   const msg = formatApiError(e)

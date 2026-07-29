@@ -63,19 +63,59 @@ function asErrArray(detail: unknown): PydanticErr[] | null {
 }
 
 // FastAPI/Pydantic 把 ``exc.errors()`` 序列化成 Python repr 字符串:
-//   ``[{'type': 'x', 'loc': ('body', 'foo'), ...}]``
-// 这里只对这种受限格式做最小转换 (不通用 Python 解析器, 仅服务错误 detail)。
+//   ``[{'type': 'x', 'loc': ('body', 'foo'), 'msg': 'Pattern \w...'}]``
+// 也可能用双引号包字符串 (当字符串里含单引号时): ``"msg": "foo's bar"``。
+// 这里做一个最小的 Python 字符串字面量识别器, 把 ``'..'`` 或 ``".."`` 转成 JSON
+// 字符串字面量, 保留结构性 ``[``/``{``/``]``/``}``、``:``、``,``、裸字面量。
+// 反斜杠在 Python repr 里按字面写入 (例如 ``\w`` 是两个字面字符), JSON 同,
+// 原文搬运即可; 真控制字符 (LF/CR/Tab) 由末尾分支再 escape。
+// 反斜杠收尾 (输入末尾是 ``\``) 不做特殊处理, 直接拼到 body — 永远会被
+// 上层 ``JSON.parse`` 拒绝, 触发 ``asErrArray`` 的回退分支。
 function pythonReprToJson(s: string): string {
-  if (!s.trimStart().startsWith('[') && !s.trimStart().startsWith('{')) {
-    throw new Error('not a python repr')
-  }
-  return s
+  const src = s
     .replace(/\(/g, '[')
     .replace(/\)/g, ']')
-    .replace(/'/g, '"')
     .replace(/\bTrue\b/g, 'true')
     .replace(/\bFalse\b/g, 'false')
     .replace(/\bNone\b/g, 'null')
+
+  let out = ''
+  let i = 0
+  const n = src.length
+  while (i < n) {
+    const c = src[i]
+    if (c === "'" || c === '"') {
+      const quote = c
+      let j = i + 1
+      let body = ''
+      while (j < n && src[j] !== quote) {
+        const ch = src[j]
+        // Python repr 里 ``\X`` 总是字面两个字符 (反斜杠本身用 ``\\``), JSON 同;
+        // 但真控制字符 (换行/CR/tab) 必须 escape, 所以单字符 ``\n`` 等也要转。
+        if (ch === '\\' && j + 1 < n) {
+          body += '\\' + src[j + 1]
+          j += 2
+          continue
+        }
+        if (ch === '"' && quote === "'") {
+          body += '\\"'
+          j++
+          continue
+        }
+        if (ch === '\n') { body += '\\n'; j++; continue }
+        if (ch === '\r') { body += '\\r'; j++; continue }
+        if (ch === '\t') { body += '\\t'; j++; continue }
+        body += ch
+        j++
+      }
+      out += '"' + body + '"'
+      i = j + 1
+      continue
+    }
+    out += c
+    i++
+  }
+  return out
 }
 
 function lastSegment(loc: unknown[] | undefined): string {
@@ -93,10 +133,6 @@ function translateOne(err: PydanticErr): FieldError | null {
   const ctx = (err.ctx ?? {}) as Record<string, unknown>
   const minLen = ctx.min_length
   const maxLen = ctx.max_length
-  const fallbackField: FieldError = {
-    field: field || '_',
-    message: err.msg ? (label ? `${label}: ${err.msg}` : err.msg) : '请求不合法',
-  }
   switch (t) {
     case 'string_too_short':
       return { field, message: `${label}至少 ${minLen} 个字符` }
@@ -115,8 +151,13 @@ function translateOne(err: PydanticErr): FieldError | null {
       return { field, message: `${label}必须为整数` }
     case 'enum':
       return { field, message: `${label}取值不合法` }
+    case 'value_error':
+      // Pydantic 自定义校验 (例如 ``@validator`` 抛 ``ValueError``),
+      // msg 通常是开发者写的中/英文诊断, 透传给用户比丢成 "请求不合法" 更有用。
+      return { field, message: label ? `${label}: ${err.msg ?? ''}` : err.msg ?? '请求不合法' }
     default:
-      return fallbackField
+      // 真正的未知类型: 不暴露后端英文 msg, 一律给出统一中文兜底。
+      return { field: field || '_', message: '请求不合法' }
   }
 }
 
