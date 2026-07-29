@@ -2,7 +2,7 @@
 
 > **任务编号**: pdf-parser-c
 > **派发对象**: Claude Code (后端, 阶段 1+2+3) + Kimi (前端, 阶段 4)
-> **状态**: ⏳ 进行中
+> **状态**: ✅ 已完成 (5 commits: `70bf641` / `1becf2e` / `f8217c1` / `849b939` / `4a2feb2`)
 > **基于**: 当前 `app/rag/parser_pdf.py` (pypdf==6.1.1 纯文本提取)
 > **部署**: 树莓派 4 Model B (aarch64, Cortex-A72 @ 1.8GHz, 4 核, 7.6GB RAM)
 
