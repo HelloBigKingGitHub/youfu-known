@@ -61,6 +61,22 @@ class EmbeddingConfig(BaseModel):
     timeout: int = 30
 
 
+class QwenVLConfig(BaseModel):
+    """Qwen-VL-Max (多模态 LLM) 配置 (Phase PDF-C.3).
+
+    跟 :class:`EmbeddingConfig` 同款 pattern, 复用 ``DASHSCOPE_API_KEY``
+    (跟 :class:`app.llm.embedding_client.DashScopeEmbeddingClient` 同源),
+    0 新接入成本。
+
+    ``api_keys`` 支持多 key 轮询 + failover (跟 MiniMax 同款).
+    默认 ``timeout=60`` (3-5s/page, 留余量).
+    """
+
+    api_key: str = "REPLACE_ME"  # 单 key 兼容字段 (从 DASHSCOPE_API_KEY 读)
+    api_keys: List[str] = Field(default_factory=list)  # 多 key 列表
+    timeout: int = 60
+
+
 class StorageConfig(BaseModel):
     upload_dir: str = "./storage/uploads"
     chroma_dir: str = "./storage/chroma"
@@ -125,6 +141,7 @@ class Settings(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    qwen_vl: QwenVLConfig = Field(default_factory=QwenVLConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     rag: RagConfig = Field(default_factory=RagConfig)
     upload: UploadConfig = Field(default_factory=UploadConfig)
@@ -226,6 +243,14 @@ def load_settings(
     if (env_val := os.getenv("DASHSCOPE_API_KEY")):
         raw_emb["api_key"] = env_val
     raw["embedding"] = raw_emb
+
+    # Phase PDF-C.3: Qwen-VL-Max multi-modal config (复用 DASHSCOPE_API_KEY).
+    # 跟 embedding 同一 credential, 0 新接入成本; 多 key fallback 留给
+    # ``app.llm.qwen_vl_client._collect_keys`` (环境变量兜底).
+    raw_qwen = dict(raw.get("qwen_vl") or {})
+    if (env_val := os.getenv("DASHSCOPE_API_KEY")):
+        raw_qwen["api_key"] = env_val
+    raw["qwen_vl"] = raw_qwen
 
     # Auth env overrides (JWT secret, admin bootstrap, cookie flags).
     raw_auth = dict(raw.get("auth") or {})

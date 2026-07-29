@@ -3,9 +3,9 @@
 Dispatches to a parser based on file extension. The supported set is
 ``{.pdf, .docx, .md, .markdown, .txt, .html, .htm}``.
 
-PDF dispatch (Phase C.1 + C.2, INC-005 "0 改 runtime" pattern)
----------------------------------------------------------------
-``load_document`` accepts two optional kwargs that, for ``.pdf`` only,
+PDF dispatch (Phase C.1 + C.2 + C.3, INC-005 "0 改 runtime" pattern)
+--------------------------------------------------------------------
+``load_document`` accepts three optional kwargs that, for ``.pdf`` only,
 prefer the new pipelines over the original ``parser_pdf`` (pypdf):
 
 * ``prefer_v2`` (Phase C.1, default ``True``) — try
@@ -18,6 +18,13 @@ prefer the new pipelines over the original ``parser_pdf`` (pypdf):
   first when ``prefer_v2=True``; OCR is only used as the fallback
   for the scan case (mirrors the ``pdf_inspector.path="ocr"`` branch
   in the spec).
+* ``prefer_vision`` (Phase C.3, default ``False``) — when ``True``,
+  route the call through ``parser_pdf_vision`` (Qwen-VL-Max
+  multimodal LLM) for complex layout PDFs. v2 is still attempted first
+  when ``prefer_v2=True``; vision is the fallback for the
+  ``pdf_inspector.path="vision"`` decision
+  (``text_ratio < 0.2``). Opt-in default — keeps Phase C.1+C.2
+  behavior unchanged.
 
 The legacy ``PARSERS`` dispatch is unchanged and remains the single
 source of truth for non-PDF formats.
@@ -28,6 +35,8 @@ Failure modes:
   fall through to the original pypdf path. Callers never see the
   new failure mode.
 - ``prefer_ocr=True`` + Tesseract unavailable or scan inference fails
+  → log a warning and fall through to the original pypdf path.
+- ``prefer_vision=True`` + Qwen-VL unavailable or API fails
   → log a warning and fall through to the original pypdf path.
 """
 
@@ -71,6 +80,7 @@ def load_document(
     *,
     prefer_v2: bool = True,
     prefer_ocr: bool = False,
+    prefer_vision: bool = False,
 ) -> List[dict]:
     """Load ``path`` and return a list of ``{page, text}`` sections.
 
@@ -94,6 +104,14 @@ def load_document(
         The OCR path is *only* used as the fallback for the scan case
         — v2 still gets a chance first when ``prefer_v2=True``.
         Default ``False`` keeps Phase C.1 behavior unchanged.
+    prefer_vision:
+        PDF-only opt-in (Phase C.3, default ``False``). When ``True``,
+        route through ``parser_pdf_vision`` (Qwen-VL-Max multimodal
+        LLM) for complex layout PDFs. v2 is still attempted first when
+        ``prefer_v2=True``; vision is the fallback for the
+        ``pdf_inspector.path="vision"`` decision
+        (``text_ratio < 0.2``). Opt-in default keeps Phase C.1+C.2
+        behavior unchanged.
     """
     p = Path(path)
     ext = detect_ext(p)
@@ -167,6 +185,45 @@ def load_document(
         except Exception as exc:
             logger.warning(
                 "OCR dispatch failed for %s: %s; falling back to parser_pdf",
+                p.name,
+                exc,
+            )
+
+    # Phase C.3: PDF Vision dispatch (opt-in). When ``prefer_vision=True``,
+    # call ``pdf_inspector`` after the OCR branch; if the inspector decides
+    # the document needs vision (``needs_vision=True``, text_ratio < 0.2),
+    # route the call through ``parser_pdf_vision`` (Qwen-VL-Max
+    # multimodal LLM). v2 above is still tried first when
+    # ``prefer_v2=True``; this branch is the fallback for the
+    # ``path == "vision"`` decision in ``pdf_inspector``. Mirrors
+    # INC-005 "0 改 runtime": PARSERS dict is not modified, the new
+    # branch lives entirely inside ``load_document``.
+    if ext == ".pdf" and prefer_vision:
+        try:
+            from app.rag.pdf_inspector import inspect_pdf  # lazy import
+            from app.rag.parser_pdf_vision import parse_pdf_vision  # lazy import
+
+            info = inspect_pdf(p)
+            if info.get("needs_vision"):
+                logger.info(
+                    "Using Qwen-VL-Max for %s (text_ratio=%s, path=%s)",
+                    p.name,
+                    info.get("text_ratio"),
+                    info.get("path"),
+                )
+                sections = parse_pdf_vision(p)
+                if sections:
+                    return sections
+                logger.info(
+                    "parser_pdf_vision returned empty for %s; "
+                    "falling back to parser_pdf",
+                    p.name,
+                )
+        except FileNotFoundError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "Vision dispatch failed for %s: %s; falling back to parser_pdf",
                 p.name,
                 exc,
             )
