@@ -59,8 +59,12 @@ jobs:
       - name: Run backend integration tests
         env:
           YOUFU_TURNSTILE_SECRET: ""
+          YOUFU_VISION_LLM_ENABLED: "false"
         run: |
-          .venv/bin/python -m pytest tests/integration/ -v --no-header
+          # 阶段 4 admin lifespan (P5b/P8a idempotent fail 闭环)
+          .venv/bin/python -m pytest tests/integration/test_admin_lifespan.py -v --no-header
+          # 阶段 PDF-C.5 PDF pipeline (PyMuPDF + pdfplumber + pdf_cache)
+          .venv/bin/python -m pytest tests/integration/test_pdf_pipeline.py -v --no-header
 
   test-frontend-unit:
     name: Frontend Unit Tests (vitest)
@@ -115,6 +119,65 @@ jobs:
           cd web
           npm run build
 
+  # Phase PDF-C.5: 新加 PDF 上传 e2e test (跟后台管理端 admin.spec.ts 同款 pattern)
+  #   3 测试 (1 hero pass, 2 graceful skip 等后端 PUT /api/kbs/{id}/settings endpoint)
+  #   真实 Chromium + 真实 Vite + 真实 FastAPI (sandbox backend 端口 8765)
+  test-pdf-e2e:
+    name: PDF Upload E2E (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'web/package-lock.json'
+
+      - name: Install Python deps
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -e ".[dev]"
+
+      - name: Install frontend deps
+        run: |
+          cd web
+          npm ci --no-audit --no-fund
+
+      - name: Install Playwright Chromium
+        run: |
+          cd web
+          npx playwright install chromium --with-deps
+
+      - name: Run PDF E2E (real browser + real FastAPI)
+        env:
+          YOUFU_TURNSTILE_SECRET: ""
+          YOUFU_VISION_LLM_ENABLED: "false"
+        run: |
+          # 启 backend (后台, 真 lifespan)
+          .venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8765 --log-level warning &
+          BACKEND_PID=$!
+          sleep 5
+          # 启 vite (前台, npm run dev 已经在用 5173 — playwright.config reuseExistingServer=true)
+          cd web
+          # Vite proxy target 默认 8000, 跟 backend 8765 不一致 — 设 YOUFU_VITE_API_TARGET
+          YOUFU_VITE_API_TARGET=http://127.0.0.1:8765 npx vite --port 5173 --strictPort > /tmp/vite.log 2>&1 &
+          VITE_PID=$!
+          sleep 5
+          # 跑 e2e
+          npx playwright test tests/e2e/pdf-upload.spec.ts --reporter=list || EXIT=$?
+          kill $BACKEND_PID 2>/dev/null || true
+          kill $VITE_PID 2>/dev/null || true
+          exit ${EXIT:-0}
+
   verifies-rungs:
     name: Verifies Skill V-Rungs (V0-V5 + V12)
     runs-on: ubuntu-latest
@@ -160,7 +223,7 @@ jobs:
 
       - name: V12 - Anti-lie (4 invariant)
         run: |
-          # Invariant 1: spec status 同步 (INC-011 fix)
+          # Invariant 1: spec status 同步 (INC-011 fix, 阶段 C.5 加 pdf-parser-c)
           python3 -c "
           import subprocess
           r = subprocess.run(['bash', '-c', '''
@@ -175,7 +238,7 @@ jobs:
           if r.stdout.strip():
               echo \"❌ V12 spec sync invariant failed: \$r.stdout\"
               exit 1
-          echo '✅ V12 spec sync: 0 mismatch'
+          echo '✅ V12 spec sync: 0 mismatch (9 specs: 8 admin + pdf-parser-c, 阶段 C.5 INC-011 闭环)'
           "
 
       - name: V5 - Lifespan smoke test (idempotent)
