@@ -14,6 +14,18 @@ import type {
   LoginResponse,
 } from './types'
 
+// Phase PDF-C.4 新加 — KB PDF 解析设置类型 (跟 web/src/lib/pdfSettings.ts 同步,
+// 后端 endpoint /api/kbs/{id}/settings 留给 Phase C.5, 当前 mock 走 API 层 fallback).
+export type KBPdfSettingsParserPreference = 'auto' | 'pymupdf' | 'ocr' | 'vision'
+
+export interface KBPdfSettings {
+  enable_ocr: boolean
+  enable_vision_llm: boolean
+  parser_preference: KBPdfSettingsParserPreference
+  pdf_cache_size_mb: number
+  vision_llm_monthly_limit_yuan: number
+}
+
 export const USER_STORAGE_KEY = 'youfu-known:user'
 
 export class ApiError extends Error {
@@ -149,6 +161,16 @@ export const api = {
   deleteKB: (kbId: string) =>
     request<{ deleted: string }>(`/api/kbs/${kbId}`, {
       method: 'DELETE',
+    }),
+
+  // Phase PDF-C.4: KB PDF 解析设置 (后端 endpoint Phase C.5 加, 当前 mock 走 KB 默认值)
+  // 复用现有 request() envelope, 跟其它 endpoint 同款
+  kbSettings: (kbId: string) => request<KBPdfSettings>(`/api/kbs/${kbId}/settings`),
+  updateKBSettings: (kbId: string, settings: KBPdfSettings) =>
+    request<KBPdfSettings>(`/api/kbs/${kbId}/settings`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
     }),
 
   // 文档

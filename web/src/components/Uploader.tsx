@@ -1,5 +1,10 @@
 // 拖拽上传 + 整块可点击
 // 现代 SaaS 风格: 圆角大, dashed 边框, 居中布局, 整块点击 + 拖拽
+//
+// Phase PDF-C.4 适配: 调 api.kbSettings 拿当前 KB 的 PDF 解析偏好,
+//   - PDF 上传时 toast 提示走哪个 parser (PyMuPDF / Tesseract OCR / Qwen-VL-Max)
+//   - 失败时静默 fallback, 不影响现有拖拽上传
+// 0 改行为契约 — 老用户完全无感
 import {
   Box,
   Button,
@@ -11,9 +16,10 @@ import {
   VStack,
 } from '@chakra-ui/react'
 import { AttachmentIcon } from '@chakra-ui/icons'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import { formatApiError } from '../lib/apiErrors'
+import { PARSER_LABELS } from '../lib/pdfSettings'
 
 interface Props {
   kbId: string
@@ -22,12 +28,36 @@ interface Props {
 
 const ACCEPT = '.pdf,.docx,.md,.txt,.html,.htm'
 
+function parserHintLabel(pref: string, visionEnabled: boolean): string {
+  // auto + 开了 vision = 走 PDFInspector 路由, 复杂 layout 自动跳 vision
+  if (pref === 'auto' && visionEnabled) return 'auto (PyMuPDF → Tesseract → Qwen-VL-Max)'
+  return PARSER_LABELS[pref as keyof typeof PARSER_LABELS] ?? PARSER_LABELS.auto
+}
+
 export function Uploader({ kbId, onUploaded }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragOver, setDragOver] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [progress, setProgress] = useState({ loaded: 0, total: 0 })
+  const [parserHint, setParserHint] = useState<string>(PARSER_LABELS.auto)
   const toast = useToast()
+
+  // Phase PDF-C.4: mount 时拉 KB settings 拿 parser 偏好
+  useEffect(() => {
+    let cancelled = false
+    api
+      .kbSettings(kbId)
+      .then((s) => {
+        if (cancelled) return
+        setParserHint(parserHintLabel(s.parser_preference, s.enable_vision_llm))
+      })
+      .catch(() => {
+        if (!cancelled) setParserHint(PARSER_LABELS.auto)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [kbId])
 
   const openPicker = () => {
     if (!uploading) inputRef.current?.click()
@@ -38,6 +68,18 @@ export function Uploader({ kbId, onUploaded }: Props) {
     const list = Array.from(files)
     setUploading(true)
     setProgress({ loaded: 0, total: list.reduce((s, f) => s + f.size, 0) })
+
+    // Phase PDF-C.4: PDF 上传时 toast 提示将用哪个 parser 解析
+    const pdfFiles = list.filter((f) => f.name.toLowerCase().endsWith('.pdf'))
+    if (pdfFiles.length > 0) {
+      toast({
+        title: `${pdfFiles.length} 个 PDF 文件, 正在用 ${parserHint} 解析`,
+        description: '完成后会自动出现在文档列表',
+        status: 'info',
+        duration: 5000,
+      })
+    }
+
     try {
       const result = await api.uploadDocuments(kbId, list, (loaded, total) => {
         setProgress({ loaded, total })
