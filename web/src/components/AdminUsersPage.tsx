@@ -17,8 +17,9 @@ import {
   useToast,
 } from '@chakra-ui/react'
 import { useEffect, useMemo, useState } from 'react'
-import { api, ApiError, USER_STORAGE_KEY } from '../api'
+import { api, USER_STORAGE_KEY } from '../api'
 import type { User } from '../types'
+import { formatApiError } from '../lib/apiErrors'
 
 export function AdminUsersPage() {
   const [users, setUsers] = useState<User[]>([])
@@ -42,9 +43,13 @@ export function AdminUsersPage() {
     try {
       const list = await api.adminListUsers()
       setUsers(list)
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '加载失败'
-      toast({ title: '加载失败', description: msg, status: 'error', duration: 4000 })
+    } catch (e: unknown) {
+      toast({
+        title: '加载失败',
+        description: formatApiError(e, '加载失败'),
+        status: 'error',
+        duration: 4000,
+      })
     } finally {
       setLoading(false)
     }
@@ -70,9 +75,13 @@ export function AdminUsersPage() {
       const updated = await api.adminUpdateUser(u.id, { is_approved: true })
       updateOne(u.id, updated)
       toast({ title: `${u.username} 已批准`, status: 'success', duration: 2000 })
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '操作失败'
-      toast({ title: '批准失败', description: msg, status: 'error', duration: 3000 })
+    } catch (e: unknown) {
+      toast({
+        title: '批准失败',
+        description: formatApiError(e, '操作失败'),
+        status: 'error',
+        duration: 3000,
+      })
     } finally {
       setBusyId(null)
     }
@@ -88,9 +97,13 @@ export function AdminUsersPage() {
         status: 'success',
         duration: 2000,
       })
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '操作失败'
-      toast({ title: '操作失败', description: msg, status: 'error', duration: 3000 })
+    } catch (e: unknown) {
+      toast({
+        title: '操作失败',
+        description: formatApiError(e, '操作失败'),
+        status: 'error',
+        duration: 3000,
+      })
     } finally {
       setBusyId(null)
     }
@@ -107,9 +120,13 @@ export function AdminUsersPage() {
         status: 'success',
         duration: 2000,
       })
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '操作失败'
-      toast({ title: '角色修改失败', description: msg, status: 'error', duration: 3000 })
+    } catch (e: unknown) {
+      toast({
+        title: '角色修改失败',
+        description: formatApiError(e, '操作失败'),
+        status: 'error',
+        duration: 3000,
+      })
     } finally {
       setBusyId(null)
     }
@@ -122,9 +139,13 @@ export function AdminUsersPage() {
       await api.adminDeleteUser(u.id)
       setUsers((prev) => prev.filter((x) => x.id !== u.id))
       toast({ title: `${u.username} 已删除`, status: 'success', duration: 2000 })
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '删除失败'
-      toast({ title: '删除失败', description: msg, status: 'error', duration: 3000 })
+    } catch (e: unknown) {
+      toast({
+        title: '删除失败',
+        description: formatApiError(e, '删除失败'),
+        status: 'error',
+        duration: 3000,
+      })
     } finally {
       setBusyId(null)
     }

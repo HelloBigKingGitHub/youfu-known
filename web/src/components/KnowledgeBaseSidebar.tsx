@@ -25,8 +25,9 @@ import { DeleteIcon } from '@chakra-ui/icons'
 import { useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import type { KB, User } from '../types'
-import { api, ApiError } from '../api'
+import { api } from '../api'
 import { NewKnowledgeBaseButton } from './NewKnowledgeBaseButton'
+import { formatApiError } from '../lib/apiErrors'
 
 interface Props {
   kbs: KB[]
@@ -73,9 +74,13 @@ export function KnowledgeBaseSidebar({
         navigate('/')
       }
       onRefresh()
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '删除失败, 请检查后端'
-      toast({ title: '删除失败', description: msg, status: 'error', duration: 4000 })
+    } catch (e: unknown) {
+      toast({
+        title: '删除失败',
+        description: formatApiError(e, '删除失败, 请检查后端'),
+        status: 'error',
+        duration: 4000,
+      })
     } finally {
       setDeleting(false)
     }

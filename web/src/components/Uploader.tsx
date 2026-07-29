@@ -12,7 +12,8 @@ import {
 } from '@chakra-ui/react'
 import { AttachmentIcon } from '@chakra-ui/icons'
 import { useRef, useState } from 'react'
-import { api, ApiError } from '../api'
+import { api } from '../api'
+import { formatApiError } from '../lib/apiErrors'
 
 interface Props {
   kbId: string
@@ -48,9 +49,13 @@ export function Uploader({ kbId, onUploaded }: Props) {
         duration: 3000,
       })
       onUploaded()
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '上传失败'
-      toast({ title: '上传失败', description: msg, status: 'error', duration: 5000 })
+    } catch (e: unknown) {
+      toast({
+        title: '上传失败',
+        description: formatApiError(e, '上传失败'),
+        status: 'error',
+        duration: 5000,
+      })
     } finally {
       setUploading(false)
       setProgress({ loaded: 0, total: 0 })

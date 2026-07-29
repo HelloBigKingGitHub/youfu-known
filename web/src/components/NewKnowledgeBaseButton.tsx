@@ -4,6 +4,7 @@ import { useState } from 'react'
 import {
   Button,
   FormControl,
+  FormHelperText,
   FormLabel,
   Input,
   Modal,
@@ -18,7 +19,8 @@ import {
   useToast,
 } from '@chakra-ui/react'
 import { AddIcon } from '@chakra-ui/icons'
-import { api, ApiError } from '../api'
+import { api } from '../api'
+import { extractFieldErrors, formatApiError } from '../lib/apiErrors'
 
 interface Props {
   onCreated: () => void
@@ -29,21 +31,23 @@ export function NewKnowledgeBaseButton({ onCreated }: Props) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [nameError, setNameError] = useState('')
+  const [descError, setDescError] = useState('')
   const toast = useToast()
 
   const reset = () => {
     setName('')
     setDescription('')
+    setNameError('')
+    setDescError('')
   }
 
   const handleSubmit = async () => {
+    setNameError('')
+    setDescError('')
     const trimmed = name.trim()
     if (!trimmed) {
-      toast({
-        title: '名称不能为空',
-        status: 'warning',
-        duration: 2000,
-      })
+      setNameError('名称不能为空')
       return
     }
     setSubmitting(true)
@@ -57,15 +61,27 @@ export function NewKnowledgeBaseButton({ onCreated }: Props) {
       reset()
       onClose()
       onCreated()
-    } catch (e) {
-      const msg =
-        e instanceof ApiError ? e.message : '创建失败, 请检查后端'
-      toast({
-        title: '创建失败',
-        description: msg,
-        status: 'error',
-        duration: 4000,
-      })
+    } catch (e: unknown) {
+      const fields = Object.fromEntries(
+        extractFieldErrors(e).map((f) => [f.field, f.message]),
+      )
+      let handled = false
+      if (fields.name) {
+        setNameError(fields.name)
+        handled = true
+      }
+      if (fields.description) {
+        setDescError(fields.description)
+        handled = true
+      }
+      if (!handled) {
+        toast({
+          title: '创建失败',
+          description: formatApiError(e, '创建失败, 请检查后端'),
+          status: 'error',
+          duration: 4000,
+        })
+      }
     } finally {
       setSubmitting(false)
     }
@@ -89,7 +105,7 @@ export function NewKnowledgeBaseButton({ onCreated }: Props) {
           <ModalHeader>新建知识库</ModalHeader>
           <ModalCloseButton />
           <ModalBody pb={4}>
-            <FormControl isRequired mb={3}>
+            <FormControl isRequired isInvalid={!!nameError} mb={3}>
               <FormLabel>名称</FormLabel>
               <Input
                 placeholder="例如: 工作笔记"
@@ -98,8 +114,11 @@ export function NewKnowledgeBaseButton({ onCreated }: Props) {
                 maxLength={64}
                 autoFocus
               />
+              {nameError && (
+                <FormHelperText color="red.500">{nameError}</FormHelperText>
+              )}
             </FormControl>
-            <FormControl>
+            <FormControl isInvalid={!!descError}>
               <FormLabel>描述</FormLabel>
               <Textarea
                 placeholder="可选, 用一句话说明这个知识库放什么"
@@ -108,6 +127,9 @@ export function NewKnowledgeBaseButton({ onCreated }: Props) {
                 maxLength={256}
                 rows={3}
               />
+              {descError && (
+                <FormHelperText color="red.500">{descError}</FormHelperText>
+              )}
             </FormControl>
           </ModalBody>
           <ModalFooter>

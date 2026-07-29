@@ -24,7 +24,8 @@ import {
 import { DeleteIcon, RepeatIcon } from '@chakra-ui/icons'
 import { useEffect, useRef } from 'react'
 import type { Document, DocumentStatus } from '../types'
-import { api, ApiError } from '../api'
+import { api } from '../api'
+import { formatApiError } from '../lib/apiErrors'
 
 interface Props {
   kbId: string
@@ -206,9 +207,13 @@ export function DocumentList({ kbId, documents, onChange }: Props) {
       await api.deleteDocument(kbId, doc.id)
       toast({ title: '文档已删除', status: 'success', duration: 2000 })
       onChange()
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '删除失败'
-      toast({ title: '删除失败', description: msg, status: 'error', duration: 4000 })
+    } catch (e: unknown) {
+      toast({
+        title: '删除失败',
+        description: formatApiError(e, '删除失败'),
+        status: 'error',
+        duration: 4000,
+      })
     }
   }
 

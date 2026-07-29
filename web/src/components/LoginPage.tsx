@@ -8,6 +8,7 @@ import {
   CardBody,
   Center,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   Heading,
   Input,
@@ -19,6 +20,7 @@ import {
 } from '@chakra-ui/react'
 import { api, USER_STORAGE_KEY } from '../api'
 import type { User } from '../types'
+import { formatApiError, isLoginCredentialError } from '../lib/apiErrors'
 
 interface LoginPageProps {
   onLogin: (user: User) => void
@@ -28,6 +30,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [formError, setFormError] = useState('')
   const navigate = useNavigate()
   const location = useLocation()
   const toast = useToast()
@@ -35,6 +38,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
   const from = (location.state as { from?: string } | undefined)?.from || '/'
 
   const handleSubmit = async () => {
+    setFormError('')
     if (!username.trim() || !password) return
     setLoading(true)
     try {
@@ -43,14 +47,17 @@ export function LoginPage({ onLogin }: LoginPageProps) {
       onLogin(resp.user)
       navigate(from, { replace: true })
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '用户名或密码错误'
-      toast({
-        title: '登录失败',
-        description: msg,
-        status: 'error',
-        duration: 4000,
-        position: 'top',
-      })
+      if (isLoginCredentialError(e)) {
+        setFormError('用户名或密码错误')
+      } else {
+        toast({
+          title: '登录失败',
+          description: formatApiError(e),
+          status: 'error',
+          duration: 4000,
+          position: 'top',
+        })
+      }
     } finally {
       setLoading(false)
     }
@@ -87,7 +94,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
             </VStack>
 
             <Stack spacing={4} w="full">
-              <FormControl>
+              <FormControl isInvalid={!!formError}>
                 <FormLabel fontSize="sm">用户名</FormLabel>
                 <Input
                   value={username}
@@ -99,7 +106,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                   isDisabled={loading}
                 />
               </FormControl>
-              <FormControl>
+              <FormControl isInvalid={!!formError}>
                 <FormLabel fontSize="sm">密码</FormLabel>
                 <Input
                   type="password"
@@ -110,6 +117,7 @@ export function LoginPage({ onLogin }: LoginPageProps) {
                   size="lg"
                   isDisabled={loading}
                 />
+                {formError && <FormErrorMessage>{formError}</FormErrorMessage>}
               </FormControl>
             </Stack>
 

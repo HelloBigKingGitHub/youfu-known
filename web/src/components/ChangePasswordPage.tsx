@@ -7,6 +7,7 @@ import {
   CardBody,
   Center,
   FormControl,
+  FormErrorMessage,
   FormLabel,
   Heading,
   Input,
@@ -16,16 +17,19 @@ import {
   useToast,
 } from '@chakra-ui/react'
 import { api } from '../api'
+import { extractFieldErrors, formatApiError } from '../lib/apiErrors'
 
 export function ChangePasswordPage() {
   const [oldPassword, setOldPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const navigate = useNavigate()
   const toast = useToast()
 
   const handleSubmit = async () => {
+    setFieldErrors({})
     if (!oldPassword || !newPassword || !confirmPassword) {
       toast({
         title: '请填写完整',
@@ -45,10 +49,10 @@ export function ChangePasswordPage() {
       })
       return
     }
-    if (newPassword.length < 6) {
+    if (newPassword.length < 8) {
       toast({
         title: '新密码太短',
-        description: '密码至少需要 6 位',
+        description: '密码至少需要 8 位',
         status: 'warning',
         duration: 4000,
         position: 'top',
@@ -67,14 +71,20 @@ export function ChangePasswordPage() {
       })
       navigate(-1)
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '修改失败'
-      toast({
-        title: '修改失败',
-        description: msg,
-        status: 'error',
-        duration: 4000,
-        position: 'top',
-      })
+      const fieldMap = Object.fromEntries(
+        extractFieldErrors(e).map((f) => [f.field, f.message]),
+      )
+      if (Object.keys(fieldMap).length > 0) {
+        setFieldErrors(fieldMap)
+      } else {
+        toast({
+          title: '修改失败',
+          description: formatApiError(e),
+          status: 'error',
+          duration: 4000,
+          position: 'top',
+        })
+      }
     } finally {
       setLoading(false)
     }
@@ -83,6 +93,8 @@ export function ChangePasswordPage() {
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSubmit()
   }
+
+  const fieldErr = (k: string) => fieldErrors[k]
 
   return (
     <Center h="100%" flex={1} bg="gray.50" p={{ base: 4, md: 8 }}>
@@ -95,7 +107,7 @@ export function ChangePasswordPage() {
             </Text>
 
             <Stack spacing={4} w="full">
-              <FormControl>
+              <FormControl isInvalid={!!fieldErr('old_password')}>
                 <FormLabel fontSize="sm">当前密码</FormLabel>
                 <Input
                   type="password"
@@ -106,8 +118,11 @@ export function ChangePasswordPage() {
                   size="lg"
                   isDisabled={loading}
                 />
+                {fieldErr('old_password') && (
+                  <FormErrorMessage>{fieldErr('old_password')}</FormErrorMessage>
+                )}
               </FormControl>
-              <FormControl>
+              <FormControl isInvalid={!!fieldErr('new_password')}>
                 <FormLabel fontSize="sm">新密码</FormLabel>
                 <Input
                   type="password"
@@ -118,6 +133,9 @@ export function ChangePasswordPage() {
                   size="lg"
                   isDisabled={loading}
                 />
+                {fieldErr('new_password') && (
+                  <FormErrorMessage>{fieldErr('new_password')}</FormErrorMessage>
+                )}
               </FormControl>
               <FormControl>
                 <FormLabel fontSize="sm">确认新密码</FormLabel>

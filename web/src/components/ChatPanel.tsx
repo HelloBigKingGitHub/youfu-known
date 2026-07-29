@@ -17,7 +17,8 @@ import {
 import { ArrowUpIcon, CloseIcon, DeleteIcon } from '@chakra-ui/icons'
 import { useEffect, useRef, useState } from 'react'
 import type { ChatTurn } from '../types'
-import { api, ApiError } from '../api'
+import { api } from '../api'
+import { formatApiError } from '../lib/apiErrors'
 import { CitationPanel } from './CitationPanel'
 
 interface Props {
@@ -47,9 +48,12 @@ export function ChatPanel({ kbId }: Props) {
           setHistory(chats.slice().reverse())
         }
       })
-      .catch((e) => {
-        const msg = e instanceof ApiError ? e.message : '加载历史失败'
-        toast({ title: '加载历史失败', description: msg, status: 'error' })
+      .catch((e: unknown) => {
+        toast({
+          title: '加载历史失败',
+          description: formatApiError(e, '加载历史失败'),
+          status: 'error',
+        })
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -119,8 +123,8 @@ export function ChatPanel({ kbId }: Props) {
       await api.chat(kbId, q)
       const chats = await api.listChats(kbId)
       setHistory(chats.slice().reverse())
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '问答失败'
+    } catch (e: unknown) {
+      const msg = formatApiError(e, '问答失败')
       setHistory((h) =>
         h.map((t) =>
           t.id === turnId ? { ...t, error: msg, status: 'failed' } : t,
@@ -143,9 +147,12 @@ export function ChatPanel({ kbId }: Props) {
     try {
       await api.clearChats(kbId)
       setHistory([])
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '清空失败'
-      toast({ title: '清空失败', description: msg, status: 'error' })
+    } catch (e: unknown) {
+      toast({
+        title: '清空失败',
+        description: formatApiError(e, '清空失败'),
+        status: 'error',
+      })
     }
   }
 
@@ -154,9 +161,12 @@ export function ChatPanel({ kbId }: Props) {
     try {
       await api.deleteChat(kbId, turnId)
       setHistory((h) => h.filter((t) => t.id !== turnId))
-    } catch (e) {
-      const msg = e instanceof ApiError ? e.message : '删除失败'
-      toast({ title: '删除失败', description: msg, status: 'error' })
+    } catch (e: unknown) {
+      toast({
+        title: '删除失败',
+        description: formatApiError(e, '删除失败'),
+        status: 'error',
+      })
     }
   }
 

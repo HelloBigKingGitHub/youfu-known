@@ -20,6 +20,7 @@ import {
 } from '@chakra-ui/react'
 import { api } from '../api'
 import { Captcha } from './Captcha'
+import { extractFieldErrors, formatApiError } from '../lib/apiErrors'
 
 const USERNAME_RE = /^[a-zA-Z0-9_-]{3,32}$/
 
@@ -30,10 +31,12 @@ export function RegisterPage() {
   const [confirm, setConfirm] = useState('')
   const [loading, setLoading] = useState(false)
   const [captchaVerified, setCaptchaVerified] = useState(false)
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const navigate = useNavigate()
   const toast = useToast()
 
   const handleSubmit = async () => {
+    setFieldErrors({})
     if (!username.trim() || !password) return
     if (!USERNAME_RE.test(username.trim())) {
       toast({
@@ -73,14 +76,20 @@ export function RegisterPage() {
       })
       navigate('/login')
     } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '注册失败'
-      toast({
-        title: '注册失败',
-        description: msg,
-        status: 'error',
-        duration: 4000,
-        position: 'top',
-      })
+      const fieldMap = Object.fromEntries(
+        extractFieldErrors(e).map((f) => [f.field, f.message]),
+      )
+      if (Object.keys(fieldMap).length > 0) {
+        setFieldErrors(fieldMap)
+      } else {
+        toast({
+          title: '注册失败',
+          description: formatApiError(e),
+          status: 'error',
+          duration: 4000,
+          position: 'top',
+        })
+      }
       setCaptchaVerified(false)
     } finally {
       setLoading(false)
@@ -93,6 +102,8 @@ export function RegisterPage() {
 
   const usernameInvalid = !!username && !USERNAME_RE.test(username)
   const confirmInvalid = !!confirm && password !== confirm
+
+  const fieldErr = (k: string) => fieldErrors[k]
 
   return (
     <Center minH="100vh" bg="gray.50" px={4} py={8}>
@@ -121,7 +132,7 @@ export function RegisterPage() {
             </VStack>
 
             <Stack spacing={4} w="full">
-              <FormControl isRequired isInvalid={usernameInvalid}>
+              <FormControl isRequired isInvalid={usernameInvalid || !!fieldErr('username')}>
                 <FormLabel fontSize="sm">用户名</FormLabel>
                 <Input
                   value={username}
@@ -132,13 +143,15 @@ export function RegisterPage() {
                   autoFocus
                   isDisabled={loading}
                 />
-                {usernameInvalid && (
+                {fieldErr('username') ? (
+                  <FormErrorMessage>{fieldErr('username')}</FormErrorMessage>
+                ) : usernameInvalid ? (
                   <FormErrorMessage>
                     用户名 3-32 字符, 仅支持字母、数字、下划线、连字符
                   </FormErrorMessage>
-                )}
+                ) : null}
               </FormControl>
-              <FormControl>
+              <FormControl isInvalid={!!fieldErr('email')}>
                 <FormLabel fontSize="sm">邮箱 (选填)</FormLabel>
                 <Input
                   type="email"
@@ -149,8 +162,11 @@ export function RegisterPage() {
                   size="lg"
                   isDisabled={loading}
                 />
+                {fieldErr('email') && (
+                  <FormErrorMessage>{fieldErr('email')}</FormErrorMessage>
+                )}
               </FormControl>
-              <FormControl isRequired>
+              <FormControl isRequired isInvalid={!!fieldErr('password')}>
                 <FormLabel fontSize="sm">密码</FormLabel>
                 <Input
                   type="password"
@@ -161,6 +177,9 @@ export function RegisterPage() {
                   size="lg"
                   isDisabled={loading}
                 />
+                {fieldErr('password') && (
+                  <FormErrorMessage>{fieldErr('password')}</FormErrorMessage>
+                )}
               </FormControl>
               <FormControl isRequired isInvalid={confirmInvalid}>
                 <FormLabel fontSize="sm">确认密码</FormLabel>
