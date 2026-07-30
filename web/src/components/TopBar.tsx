@@ -124,6 +124,17 @@ export function TopBar({
                 用户管理
               </MenuItem>
             )}
+            {user?.role === 'admin' && (
+              <MenuItem
+                icon={<ExternalLinkIcon />}
+                onClick={() =>
+                  window.open('https://admin.kb.sxy.homes', '_blank')
+                }
+              >
+                进入管理后台
+              </MenuItem>
+            )}
+            <MenuDivider />
             <MenuItem
               icon={<ExternalLinkIcon />}
               color="red.500"
