@@ -9,6 +9,19 @@ Run via::
 
     source .venv/bin/activate
     uvicorn main:app --host 0.0.0.0 --port 8000
+
+Domain layout (single backend on :8000; SPA selection is by Host header):
+
+- ``kb.sxy.homes``       -> main SPA (``web/dist``)
+- ``admin-kb.sxy.homes`` -> admin SPA (``admin-web/dist``; path comes
+  from ``YOUFU_ADMIN_WEB_DIST`` on the Pi, or
+  ``<project_root>/admin-web/dist`` locally)
+
+Cross-subdomain session cookie: ``Domain=.sxy.homes`` (set in
+``app/api/auth.py`` so a single login works on every ``*.sxy.homes``
+subdomain). CORS allowlist lives in ``app/api/__init__.py`` and is the
+authoritative list for both ``CORSMiddleware`` and the
+Origin-based CSRF middleware in ``_register_csrf_middleware``.
 """
 
 from __future__ import annotations
@@ -20,7 +33,6 @@ from typing import AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from app.api import admin as admin_router
@@ -236,9 +248,9 @@ def create_app() -> FastAPI:
 def _register_csrf_middleware(app: FastAPI) -> None:
     """Reject state-changing requests from disallowed origins.
 
-    The cross-subdomain cookie (Domain=.kb.sxy.homes, SameSite=None,
+    The cross-subdomain cookie (Domain=.sxy.homes, SameSite=None,
     Secure) is required so the session flows between kb.sxy.homes and
-    admin.kb.sxy.homes, but it also means any third-party site can
+    admin-kb.sxy.homes, but it also means any third-party site can
     ride the cookie if the user is authenticated. CORS prevents the
     attacker from *reading* the response, but the server would still
     *process* the state-changing request (DELETE /api/admin/kbs/*,
@@ -249,8 +261,14 @@ def _register_csrf_middleware(app: FastAPI) -> None:
     403 before the handler runs. Same-origin requests (the browser
     omits Origin) are allowed; the CORS configuration already makes
     them the only way for an attacker to inject JS on the same origin.
+
+    A second middleware logs (and 403s) any request bearing the
+    legacy ``admin.kb.sxy.homes`` origin -- we migrated off that host
+    when the admin URL moved to ``admin-kb.sxy.homes``, and any
+    traffic from it now is either stale DNS or an active exploit
+    attempt.
     """
-    from app.api import ADMIN_CORS_ORIGINS
+    from app.api import ADMIN_CORS_ORIGINS, LEGACY_ADMIN_ORIGIN
 
     allowed = set(ADMIN_CORS_ORIGINS)
 
@@ -258,38 +276,40 @@ def _register_csrf_middleware(app: FastAPI) -> None:
     async def _csrf_protect(request: Request, call_next):
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
             origin = request.headers.get("origin")
-            if origin is not None and origin not in allowed:
-                return JSONResponse(
-                    status_code=403,
-                    content=api_err(403, "invalid origin"),
-                )
+            if origin is not None:
+                if origin == LEGACY_ADMIN_ORIGIN:
+                    logger.warning(
+                        "rejecting request from legacy admin origin %s "
+                        "(method=%s path=%s); admin URL migrated to "
+                        "admin-kb.sxy.homes",
+                        origin,
+                        request.method,
+                        request.url.path,
+                    )
+                    return JSONResponse(
+                        status_code=403,
+                        content=api_err(403, "invalid origin"),
+                    )
+                if origin not in allowed:
+                    return JSONResponse(
+                        status_code=403,
+                        content=api_err(403, "invalid origin"),
+                    )
         return await call_next(request)
 
 
 def _register_static(app: FastAPI) -> None:
-    """挂载前端构建产物 (web/dist) 为静态服务 (根路径 /)"""
-    dist_dir = Path(__file__).resolve().parent / "web" / "dist"
-    if not (dist_dir / "index.html").is_file():
-        return  # dev 模式: 没 build, 跳过
-    # 资源路径 /assets/* 走 StaticFiles
-    app.mount(
-        "/assets",
-        StaticFiles(directory=str(dist_dir / "assets")),
-        name="assets",
-    )
+    """挂载前端构建产物为静态服务 (根路径 /), 按 Host 头分发。
 
-    @app.get("/", include_in_schema=False)
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str = "") -> object:
-        # /api/* 已经由 router 处理; 其它都返回 index.html (SPA 路由)
-        if full_path.startswith("api/") or full_path.startswith("docs") \
-                or full_path.startswith("openapi.json") \
-                or full_path.startswith("redoc"):
-            from fastapi import HTTPException
-            raise HTTPException(status_code=404, detail="Not Found")
-        index = dist_dir / "index.html"
-        from fastapi.responses import FileResponse
-        return FileResponse(str(index))
+    The dispatcher lives in :mod:`app.static_router`. It handles both
+    the KB SPA (``web/dist``) and the admin SPA (``admin-web/dist``),
+    picking the right one based on the request's ``Host`` header. When
+    neither dist is built, the helper is a no-op (dev mode).
+    """
+    from app.static_router import register_host_static
+
+    project_root = Path(__file__).resolve().parent
+    register_host_static(app, project_root)
 
 
 def _register_root(app: FastAPI) -> None:

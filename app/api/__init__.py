@@ -16,11 +16,25 @@ from fastapi.middleware.cors import CORSMiddleware
 
 
 ADMIN_CORS_ORIGINS = (
+    # Production hostnames (single-label, two-segment so they share the
+    # ``Domain=.sxy.homes`` cookie scope set in :mod:`app.api.auth`).
     "https://kb.sxy.homes",
-    "https://admin.kb.sxy.homes",
+    "https://admin-kb.sxy.homes",
+    # Dev Vite origins.
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
     "http://localhost:5174",
     "http://127.0.0.1:5174",
 )
+
+
+# Legacy admin host (three-segment ``admin.kb.sxy.homes``). The cookie
+# scope was changed to ``.sxy.homes`` when we migrated the admin URL
+# to ``admin-kb.sxy.homes``; browsers will no longer carry the old
+# cookie, so any incoming CORS / cookie-attach from this origin is
+# either stale config or an active exploit attempt. We block it
+# explicitly and log so deploy drift is obvious in the access log.
+LEGACY_ADMIN_ORIGIN = "https://admin.kb.sxy.homes"
 
 
 def add_cors(app: Any) -> None:

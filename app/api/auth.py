@@ -60,12 +60,17 @@ def _set_session_cookie(response: Response, token: str, request: Request) -> Non
     """Stamp the ``session_token`` cookie onto ``response``.
 
     ``secure`` and ``samesite`` are pulled from settings so dev (HTTP)
-    can flip ``secure=False`` without code changes.
+    can flip ``secure=False`` without code changes. When the cookie
+    is marked ``Secure`` (i.e. production HTTPS), we set
+    ``Domain=.sxy.homes`` so a single login works on every
+    ``*.sxy.homes`` subdomain (kb, admin-kb, future additions). In
+    dev (``Secure=False``) no domain is set, so the cookie sticks to
+    ``localhost`` only.
     """
     settings = request.app.state.settings
     cookie_secure = bool(getattr(settings.auth, "cookie_secure", True))
     session_hours = int(getattr(settings.auth, "session_hours", 24))
-    cookie_domain = ".kb.sxy.homes" if cookie_secure else None
+    cookie_domain = ".sxy.homes" if cookie_secure else None
     response.set_cookie(
         key=_COOKIE_NAME,
         value=token,
@@ -84,7 +89,7 @@ def _clear_session_cookie(response: Response, request: Request) -> None:
     cookie_secure = bool(getattr(settings.auth, "cookie_secure", True))
     response.delete_cookie(
         key=_COOKIE_NAME,
-        domain=".kb.sxy.homes" if cookie_secure else None,
+        domain=".sxy.homes" if cookie_secure else None,
         path="/",
     )
 

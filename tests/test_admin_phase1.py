@@ -195,12 +195,12 @@ def test_admin_cors_and_secure_cookie_flags(client: TestClient) -> None:
     preflight = client.options(
         "/api/admin/dashboard",
         headers={
-            "Origin": "https://admin.kb.sxy.homes",
+            "Origin": "https://admin-kb.sxy.homes",
             "Access-Control-Request-Method": "GET",
         },
     )
     assert preflight.status_code == 200
-    assert preflight.headers["access-control-allow-origin"] == "https://admin.kb.sxy.homes"
+    assert preflight.headers["access-control-allow-origin"] == "https://admin-kb.sxy.homes"
     assert preflight.headers["access-control-allow-credentials"] == "true"
 
     client.app.state.settings.auth.cookie_secure = True  # type: ignore[attr-defined]
@@ -211,7 +211,9 @@ def test_admin_cors_and_secure_cookie_flags(client: TestClient) -> None:
     set_cookie = login.headers["set-cookie"].lower()
     assert "samesite=none" in set_cookie
     assert "secure" in set_cookie
-    assert "domain=.kb.sxy.homes" in set_cookie
+    # Cookie is scoped to ``.sxy.homes`` so a single login works on
+    # every ``*.sxy.homes`` subdomain (kb, admin-kb, future ones).
+    assert "domain=.sxy.homes" in set_cookie
 
 
 
@@ -275,7 +277,7 @@ def test_csrf_allows_known_origin(client: TestClient) -> None:
     """
     response = client.delete(
         "/api/admin/kbs/does-not-exist",
-        headers={"Origin": "https://admin.kb.sxy.homes"},
+        headers={"Origin": "https://admin-kb.sxy.homes"},
     )
     assert response.status_code != 403
     assert response.status_code == 401
