@@ -11,7 +11,7 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react'
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   FiActivity,
@@ -37,22 +37,13 @@ const NAV: readonly NavItem[] = [
 export function AdminLayout() {
   const { user, loading, logout } = useAuth()
   const navigate = useNavigate()
-  const location = useLocation()
 
-  if (loading) {
+  if (loading || !user) {
     return (
       <Flex h="100vh" align="center" justify="center" bg="ink.950">
         <Spinner color="signal.400" size="lg" />
       </Flex>
     )
-  }
-
-  if (!user) {
-    if (location.pathname !== '/admin/login') {
-      const redirect = encodeURIComponent(location.pathname + location.search)
-      navigate(`/admin/login?next=${redirect}`, { replace: true })
-    }
-    return <Outlet />
   }
 
   const handleLogout = async () => {

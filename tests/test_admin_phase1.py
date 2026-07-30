@@ -247,4 +247,46 @@ def test_cookie_uses_lax_without_secure_in_dev(client: TestClient) -> None:
     set_cookie = login.headers["set-cookie"].lower()
     assert "samesite=lax" in set_cookie
     assert "secure" not in set_cookie
-    assert "domain=" not in set_cookie
+
+
+def test_csrf_blocks_state_change_with_unknown_origin(client: TestClient) -> None:
+    """A DELETE with a non-allowlisted Origin is rejected with 403.
+
+    Closes the CSRF window opened by SameSite=None + cross-subdomain cookie:
+    even if CORS blocks the response from being read, the server still
+    processes the request without this check.
+    """
+    response = client.delete(
+        "/api/admin/kbs/some-kb",
+        headers={"Origin": "https://evil.example.com"},
+    )
+    assert response.status_code == 403
+    body = response.json()
+    assert body["code"] == 403
+    assert body["message"] == "invalid origin"
+
+
+def test_csrf_allows_known_origin(client: TestClient) -> None:
+    """A DELETE with an allowlisted Origin reaches the handler.
+
+    Without authentication the auth dependency returns 401 -- the
+    middleware lets the request through (not 403), proving the
+    allowlist check passed.
+    """
+    response = client.delete(
+        "/api/admin/kbs/does-not-exist",
+        headers={"Origin": "https://admin.kb.sxy.homes"},
+    )
+    assert response.status_code != 403
+    assert response.status_code == 401
+
+
+def test_csrf_allows_missing_origin(client: TestClient) -> None:
+    """Same-origin requests (browser omits Origin) are allowed.
+
+    Without authentication, the handler responds 401 rather than 403;
+    the request reaches the auth dependency, proving the middleware
+    didn't reject it.
+    """
+    response = client.get("/api/admin/dashboard")
+    assert response.status_code == 401

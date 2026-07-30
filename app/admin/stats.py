@@ -11,7 +11,12 @@ from app.kb.storage import SQLiteStorage
 _DOCUMENT_STATUS_KEYS = ("ready", "processing", "failed")
 
 
+_ALLOWED_TABLES = frozenset({"knowledge_bases", "documents", "chunks", "chat_turns", "users"})
+
+
 def _table_columns(storage: SQLiteStorage, table: str) -> set[str]:
+    if table not in _ALLOWED_TABLES:
+        raise ValueError(f"unknown table: {table}")
     with storage._connect() as conn:  # type: ignore[attr-defined]
         return {
             str(row[1])

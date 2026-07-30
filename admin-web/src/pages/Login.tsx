@@ -17,7 +17,7 @@ import { useAuth } from '../context/AuthContext'
 import { formatApiError } from '../api'
 
 export function LoginPage() {
-  const { login } = useAuth()
+  const { login, logout } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const [username, setUsername] = useState('')
@@ -36,6 +36,10 @@ export function LoginPage() {
     try {
       const user = await login(username.trim(), password)
       if (user.role !== 'admin') {
+        // Session is now set on the server but the role check fails.
+        // Drop the session immediately so the SPA doesn't briefly
+        // render with a member user in auth state.
+        await logout()
         setError('当前账号无管理后台权限')
         return
       }

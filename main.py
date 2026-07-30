@@ -225,11 +225,45 @@ def create_app() -> FastAPI:
     )
 
     configure_cors(app)
+    _register_csrf_middleware(app)
     _register_exception_handlers(app)
     _register_routers(app)
     _register_root(app)
     _register_static(app)
     return app
+
+
+def _register_csrf_middleware(app: FastAPI) -> None:
+    """Reject state-changing requests from disallowed origins.
+
+    The cross-subdomain cookie (Domain=.kb.sxy.homes, SameSite=None,
+    Secure) is required so the session flows between kb.sxy.homes and
+    admin.kb.sxy.homes, but it also means any third-party site can
+    ride the cookie if the user is authenticated. CORS prevents the
+    attacker from *reading* the response, but the server would still
+    *process* the state-changing request (DELETE /api/admin/kbs/*,
+    PATCH /api/admin/settings, POST /api/auth/logout, etc.).
+
+    This middleware mirrors the CORS allowlist on the server side so
+    a request with an Origin outside the trusted set is rejected with
+    403 before the handler runs. Same-origin requests (the browser
+    omits Origin) are allowed; the CORS configuration already makes
+    them the only way for an attacker to inject JS on the same origin.
+    """
+    from app.api import ADMIN_CORS_ORIGINS
+
+    allowed = set(ADMIN_CORS_ORIGINS)
+
+    @app.middleware("http")
+    async def _csrf_protect(request: Request, call_next):
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            origin = request.headers.get("origin")
+            if origin is not None and origin not in allowed:
+                return JSONResponse(
+                    status_code=403,
+                    content=api_err(403, "invalid origin"),
+                )
+        return await call_next(request)
 
 
 def _register_static(app: FastAPI) -> None:
