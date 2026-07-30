@@ -65,19 +65,28 @@ def _set_session_cookie(response: Response, token: str, request: Request) -> Non
     settings = request.app.state.settings
     cookie_secure = bool(getattr(settings.auth, "cookie_secure", True))
     session_hours = int(getattr(settings.auth, "session_hours", 24))
+    cookie_domain = ".kb.sxy.homes" if cookie_secure else None
     response.set_cookie(
         key=_COOKIE_NAME,
         value=token,
         max_age=session_hours * 3600,
         httponly=True,
         secure=cookie_secure,
-        samesite="lax",
+        samesite="none" if cookie_secure else "lax",
+        domain=cookie_domain,
         path="/",
     )
 
 
-def _clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(key=_COOKIE_NAME, path="/")
+def _clear_session_cookie(response: Response, request: Request) -> None:
+    """Clear the session cookie using the same production domain scope."""
+    settings = request.app.state.settings
+    cookie_secure = bool(getattr(settings.auth, "cookie_secure", True))
+    response.delete_cookie(
+        key=_COOKIE_NAME,
+        domain=".kb.sxy.homes" if cookie_secure else None,
+        path="/",
+    )
 
 
 def _user_payload(user: User) -> dict:
@@ -150,9 +159,9 @@ async def login(body: UserLogin, request: Request, response: Response) -> dict:
 
 
 @router.post("/logout")
-async def logout(response: Response) -> dict:
+async def logout(request: Request, response: Response) -> dict:
     """Clear the session cookie. Idempotent."""
-    _clear_session_cookie(response)
+    _clear_session_cookie(response, request)
     return ok({"logged_out": True})
 
 

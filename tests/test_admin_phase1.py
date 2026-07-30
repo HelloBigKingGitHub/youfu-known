@@ -214,6 +214,7 @@ def test_admin_cors_and_secure_cookie_flags(client: TestClient) -> None:
     assert "domain=.kb.sxy.homes" in set_cookie
 
 
+
 def test_settings_patch_validates_chunk_overlap(client: TestClient) -> None:
     login = client.post(
         "/api/auth/login", json={"username": "root", "password": "rootpw"}
@@ -223,3 +224,27 @@ def test_settings_patch_validates_chunk_overlap(client: TestClient) -> None:
         "/api/admin/settings", json={"chunk_size": 10, "chunk_overlap": 10}
     )
     assert invalid.status_code == 400
+
+
+def test_admin_cors_allows_loopback_dev_origin(client: TestClient) -> None:
+    preflight = client.options(
+        "/api/admin/dashboard",
+        headers={
+            "Origin": "http://127.0.0.1:5174",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert preflight.status_code == 200
+    assert preflight.headers["access-control-allow-origin"] == "http://127.0.0.1:5174"
+
+
+def test_cookie_uses_lax_without_secure_in_dev(client: TestClient) -> None:
+    client.app.state.settings.auth.cookie_secure = False  # type: ignore[attr-defined]
+    login = client.post(
+        "/api/auth/login", json={"username": "root", "password": "rootpw"}
+    )
+    assert login.status_code == 200, login.text
+    set_cookie = login.headers["set-cookie"].lower()
+    assert "samesite=lax" in set_cookie
+    assert "secure" not in set_cookie
+    assert "domain=" not in set_cookie

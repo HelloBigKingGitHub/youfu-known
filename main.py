@@ -32,6 +32,9 @@ from app.api import health as health_router
 from app.api import knowledge_bases as knowledge_bases_router
 from app.api import err as api_err
 from app.api import ok as api_ok
+from app.api import configure_cors
+from app.admin import router as admin_phase1_router
+from app.admin.settings import RuntimeSettings
 from app.auth.service import AuthService
 from app.auth.storage import UserStore
 import app.config as app_config
@@ -116,6 +119,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 4. Make singletons visible to the routers (``app.deps``).
     app.state.settings = settings
+    app.state.runtime_settings = RuntimeSettings(settings)
     app.state.storage = storage
     app.state.chat_client = chat_client
     app.state.embed_client = embed_client
@@ -220,6 +224,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    configure_cors(app)
     _register_exception_handlers(app)
     _register_routers(app)
     _register_root(app)
@@ -273,6 +278,7 @@ def _register_routers(app: FastAPI) -> None:
     app.include_router(health_router.router)
     app.include_router(auth_router.router)
     app.include_router(admin_router.router)
+    app.include_router(admin_phase1_router)
     app.include_router(knowledge_bases_router.router)
     app.include_router(documents_router.router)
     app.include_router(chat_router.router)

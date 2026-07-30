@@ -12,6 +12,31 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from fastapi.middleware.cors import CORSMiddleware
+
+
+ADMIN_CORS_ORIGINS = (
+    "https://kb.sxy.homes",
+    "https://admin.kb.sxy.homes",
+    "http://localhost:5174",
+    "http://127.0.0.1:5174",
+)
+
+
+def add_cors(app: Any) -> None:
+    """Install the explicit-origin CORS policy used by both SPAs."""
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=list(ADMIN_CORS_ORIGINS),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+
+# Backwards-compatible name used by existing application wiring.
+configure_cors = add_cors
+
 
 def ok(data: Any = None) -> Dict[str, Any]:
     """Build a success envelope ``{"code": 0, "data": data}``.
