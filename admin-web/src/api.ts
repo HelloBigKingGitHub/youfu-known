@@ -71,6 +71,15 @@ export interface AdminSettings {
 
 export type SettingsPatch = Partial<AdminSettings>
 
+export interface FeatureFlag {
+  user_id: string
+  feature: string
+  enabled: boolean
+  granted_by?: string | null
+  granted_at?: string | null
+  created_at: string
+}
+
 interface Envelope<T> {
   code: number
   data?: T
@@ -172,6 +181,15 @@ export const api = {
     request<{ deleted: string; existed: boolean }>(
       `/api/admin/users/${encodeURIComponent(userId)}`,
       { method: 'DELETE' },
+    ),
+  listUserFeatures: (userId: string) =>
+    request<FeatureFlag[]>(
+      `/api/admin/users/${encodeURIComponent(userId)}/features`,
+    ),
+  updateUserFeature: (userId: string, feature: string, enabled: boolean) =>
+    request<FeatureFlag>(
+      `/api/admin/users/${encodeURIComponent(userId)}/features/${encodeURIComponent(feature)}`,
+      { method: 'PUT', body: JSON.stringify({ enabled }) },
     ),
 }
 

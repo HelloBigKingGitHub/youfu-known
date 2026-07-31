@@ -48,6 +48,10 @@ const FiUsers = (props: React.SVGProps<SVGSVGElement>) => (
   </svg>
 )
 
+// Phase 1.5 commit `1aaaea5` already verified that the Users page mounts inside
+// this layout via the React Router outlet; Phase Feature Flags (commit pending)
+// adds /admin/users/:id as a child route, which inherits the same AdminLayout —
+// no sidebar change is required for the detail view to render in context.
 const NAV: readonly NavItem[] = [
   { to: '/admin', label: '总览', icon: FiGrid },
   { to: '/admin/kbs', label: '知识库', icon: FiBookOpen },
@@ -148,6 +152,10 @@ export function AdminLayout() {
 }
 
 function AdminNavLink({ item }: { item: NavItem }) {
+  // Phase Feature Flags: /admin/users/:id is a child of /admin/users, so the
+  // sidebar must keep the Users nav item highlighted on the detail page.
+  // We rely on NavLink's prefix matching (`end={false}`) for that — the
+  // `/admin` index page is the only one that should match exactly.
   return (
     <NavLink
       to={item.to}
