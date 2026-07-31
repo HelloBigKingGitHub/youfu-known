@@ -108,6 +108,13 @@ export function TopBar({
                 {user.role === 'admin' ? '👑 管理员' : '👤 成员'}
               </Text>
             </MenuItem>
+            {!user.is_approved && (
+              <MenuItem isDisabled>
+                <Text fontSize="xs" color="orange.500">
+                  ⏳ 待管理员批准后才能使用功能
+                </Text>
+              </MenuItem>
+            )}
             <MenuDivider />
             <MenuItem
               icon={<LockIcon />}

@@ -2,7 +2,7 @@
 
 > **任务编号**: admin-system-phase-1  
 > **派发对象**: Claude Code (后端 + 兼任前端 admin-web)  
-> **状态**: ✅ 已完成 (Phase 1: 11 commits + Phase 1.5: 1 commit, 前台 AdminUsersPage 已删, 整合到 admin.sxy.homes /admin/users)  
+> **状态**: ✅ 已完成 (Phase 1: 11 commits + Phase 1.5: 1 commit + Phase Feature Flags 整合: 3 commits, 前台 AdminUsersPage 已删, admin.sxy.homes /admin/users 完整闭环)  
 > **依据**: 你 (主协调) 拍板的 4 个决策  
 > **基于**: 当前 main 分支
 
