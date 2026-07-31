@@ -132,6 +132,23 @@ CREATE INDEX IF NOT EXISTS idx_pdf_cache_created_at ON pdf_cache(created_at);
 """
 
 
+# Phase Feature Flags: feature_flags table (admin-controlled user gating)
+CREATE_FEATURE_FLAGS_SQL = """
+CREATE TABLE IF NOT EXISTS feature_flags (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id       TEXT NOT NULL,
+    feature       TEXT NOT NULL,
+    enabled       INTEGER NOT NULL DEFAULT 0,
+    granted_by    TEXT,
+    granted_at    TIMESTAMP,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_id, feature)
+);
+CREATE INDEX IF NOT EXISTS idx_feature_flags_user ON feature_flags(user_id);
+CREATE INDEX IF NOT EXISTS idx_feature_flags_feature ON feature_flags(feature);
+"""
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -297,6 +314,7 @@ class SQLiteStorage:
                     + CREATE_CHUNK_SQL
                     + CREATE_INDEX_SQL
                     + CREATE_PDF_CACHE_SQL  # Phase PDF-C.2 (new table, no existing table changed)
+                    + CREATE_FEATURE_FLAGS_SQL  # Phase Feature Flags (new table, no existing table changed)
                 )
                 self._ensure_auth_columns(conn)
                 conn.commit()

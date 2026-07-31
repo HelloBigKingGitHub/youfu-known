@@ -22,9 +22,10 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api import ok
-from app.auth.deps import get_current_user
 from app.auth.models import User, UserRole
 from app.deps import get_retriever, get_kb_service
+from app.feature_flag_decorator import require_feature
+from app.feature_flags import Feature
 from app.kb.models import (
     ChatRequest,
     ChatResponse,
@@ -154,7 +155,7 @@ async def chat(
     kb_id: str,
     body: ChatRequest,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_feature(Feature.KB_CHAT)),
     retriever: Retriever = Depends(get_retriever),
     kb_service: KBService = Depends(get_kb_service),
 ) -> dict:

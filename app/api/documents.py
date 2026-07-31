@@ -27,6 +27,8 @@ from app.api import ok
 from app.auth.deps import get_current_user
 from app.auth.models import User, UserRole
 from app.deps import get_kb_service
+from app.feature_flag_decorator import require_feature
+from app.feature_flags import Feature
 from app.jobs.ingest import kick_ingest
 from app.kb.models import ChunkMeta
 from app.kb.service import (
@@ -140,7 +142,7 @@ async def upload_documents(
     kb_id: str,
     request: Request,
     files: List[UploadFile] = File(..., description="One or more files to upload"),
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_feature(Feature.DOC_UPLOAD)),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Upload one or more files into a KB and kick off background ingest.
@@ -262,7 +264,7 @@ async def document_status(
 async def delete_document(
     kb_id: str,
     doc_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_feature(Feature.DOC_DELETE)),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Remove a document and its associated Chroma chunks (write access)."""

@@ -107,10 +107,32 @@ def _parse_dt(value: Any) -> datetime:
     return datetime.utcnow()
 
 
+class FeatureFlagResponse(BaseModel):
+    """Feature flag response (跟 INC-005 '不替换' 同款)."""
+    user_id: str
+    feature: str
+    enabled: bool
+    granted_by: Optional[str] = None
+    granted_at: Optional[datetime] = None
+    created_at: datetime
+
+    @classmethod
+    def from_flag(cls, flag: Any) -> "FeatureFlagResponse":
+        return cls(
+            user_id=flag.user_id,
+            feature=flag.feature,
+            enabled=flag.enabled,
+            granted_by=flag.granted_by,
+            granted_at=flag.granted_at,
+            created_at=flag.created_at,
+        )
+
+
 __all__ = [
     "AdminKBView",
     "AuditEntry",
     "DashboardStats",
+    "FeatureFlagResponse",
     "SettingsPayload",
     "UserResponse",
 ]

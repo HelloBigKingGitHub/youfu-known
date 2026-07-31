@@ -30,6 +30,8 @@ from app.api import ok
 from app.auth.deps import get_current_user, require_admin
 from app.auth.models import User, UserRole
 from app.deps import get_kb_service
+from app.feature_flag_decorator import require_feature
+from app.feature_flags import Feature
 from app.kb.models import ChatTurn, Citation
 from app.kb.service import KBService
 from app.kb.storage import SQLiteStorage
@@ -96,7 +98,7 @@ def _get_storage(request: Request) -> SQLiteStorage:
 async def list_chat_history(
     kb_id: str,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_feature(Feature.CHAT_HISTORY)),
     limit: int = Query(50, ge=1, le=500),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
@@ -120,7 +122,7 @@ async def get_chat_history(
     kb_id: str,
     turn_id: str,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_feature(Feature.CHAT_HISTORY)),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Fetch a single chat turn scoped to the current user.

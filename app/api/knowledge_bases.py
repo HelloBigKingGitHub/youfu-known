@@ -14,6 +14,8 @@ from app.api.request_models import KnowledgeBaseCreate, KnowledgeBaseUpdate
 from app.auth.deps import get_current_user
 from app.auth.models import User, UserRole
 from app.deps import get_kb_service
+from app.feature_flag_decorator import require_feature
+from app.feature_flags import Feature
 from app.kb.service import (
     KBNotFoundError,
     KBService,
@@ -90,7 +92,7 @@ async def list_kbs(
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_kb(
     body: KnowledgeBaseCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_feature(Feature.KB_CREATE)),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Create a new knowledge base owned by the current user."""
@@ -136,7 +138,7 @@ async def kb_detail(
 async def rename_kb(
     kb_id: str,
     body: KnowledgeBaseUpdate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_feature(Feature.KB_CREATE)),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Rename / update description / toggle ``is_shared``.
@@ -168,7 +170,7 @@ async def rename_kb(
 @router.delete("/{kb_id}")
 async def delete_kb(
     kb_id: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_feature(Feature.KB_CREATE)),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Delete a KB (owner or admin only)."""
