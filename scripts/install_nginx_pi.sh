@@ -24,7 +24,9 @@
 
 set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# PROJECT_ROOT was wrong: this script lives in /home/youfu
+# so cd .. would escape to /home. Use SCRIPT_DIR directly.
+PROJECT_ROOT="${SCRIPT_DIR}"
 CONF_SRC="${PROJECT_ROOT}/nginx/youfu-known.conf"
 CONF_NAME="youfu-known"
 NGINX_AVAILABLE="/etc/nginx/sites-available/${CONF_NAME}.conf"
