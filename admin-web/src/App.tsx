@@ -6,6 +6,7 @@ import { DashboardPage } from './pages/Dashboard'
 import { KBsPage } from './pages/KBs'
 import { AuditPage } from './pages/Audit'
 import { SettingsPage } from './pages/Settings'
+import { UsersPage } from './pages/Users'
 import { useAuth } from './context/AuthContext'
 
 function RequireAdmin({ children }: { children: JSX.Element }) {
@@ -53,6 +54,14 @@ export function App() {
           element={
             <RequireAdmin>
               <SettingsPage />
+            </RequireAdmin>
+          }
+        />
+        <Route
+          path="/admin/users"
+          element={
+            <RequireAdmin>
+              <UsersPage />
             </RequireAdmin>
           }
         />

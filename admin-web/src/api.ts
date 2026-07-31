@@ -167,6 +167,12 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
+  listUsers: () => request<AdminUser[]>('/api/admin/users'),
+  deleteUser: (userId: string) =>
+    request<{ deleted: string; existed: boolean }>(
+      `/api/admin/users/${encodeURIComponent(userId)}`,
+      { method: 'DELETE' },
+    ),
 }
 
 export { request }

@@ -43,19 +43,27 @@ def get_kb_service(request: Request) -> "KBService":
     return service
 
 
-from app.admin import audit, dashboard, kbs, settings
-from app.admin.schemas import AdminKBView, AuditEntry, DashboardStats, SettingsPayload
+from app.admin import audit, dashboard, kbs, settings, users
+from app.admin.schemas import (
+    AdminKBView,
+    AuditEntry,
+    DashboardStats,
+    SettingsPayload,
+    UserResponse,
+)
 
 router.include_router(dashboard.router)
 router.include_router(kbs.router)
 router.include_router(audit.router)
 router.include_router(settings.router)
+router.include_router(users.router)
 
 __all__ = [
     "AdminKBView",
     "AuditEntry",
     "DashboardStats",
     "SettingsPayload",
+    "UserResponse",
     "router",
     "get_storage",
     "get_user_store",
