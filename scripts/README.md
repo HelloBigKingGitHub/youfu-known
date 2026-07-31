@@ -7,14 +7,18 @@
 
 ```
 scripts/
-├── install.sh              # 一键安装
-├── start.sh                # 启动服务
-├── stop.sh                 # 停止服务
+├── install.sh              # 一键安装 (后端 + admin-web 构建产物)
+├── install_nginx_pi.sh     # 一键装 nginx 反代 (Pi 上 sudo 跑)
+├── start.sh                # 启动后端服务
+├── stop.sh                 # 停止后端服务
 ├── restart.sh              # 重启 (= stop + start)
 ├── status.sh               # 查看状态
 ├── update.sh               # 升级 (git pull + 重装依赖 + 重启)
 ├── uninstall.sh            # 卸载
 ├── youfu-known.service     # systemd unit 模板 (由 install.sh 注册)
+├── cloudflare/             # cloudflared 一键部署脚本
+│   ├── setup_tunnel.sh
+│   └── uninstall_tunnel.sh
 └── lib/
     └── common.sh           # 颜色/日志/锁/路径/进程管理 公共函数
 ```
