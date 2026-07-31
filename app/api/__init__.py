@@ -16,25 +16,36 @@ from fastapi.middleware.cors import CORSMiddleware
 
 
 ADMIN_CORS_ORIGINS = (
-    # Production hostnames (single-label, two-segment so they share the
-    # ``Domain=.sxy.homes`` cookie scope set in :mod:`app.api.auth`).
+    # Production hostnames. Both share the ``Domain=.sxy.homes``
+    # cookie scope set in :mod:`app.api.auth` so a single login works
+    # on every ``*.sxy.homes`` subdomain. The admin SPA lives on its
+    # own origin (``admin.sxy.homes``, served by nginx :8002) and
+    # therefore requires an explicit CORS entry to call ``/api/*``.
     "https://kb.sxy.homes",
-    "https://admin-kb.sxy.homes",
+    "https://admin.sxy.homes",
     # Dev Vite origins.
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    # Admin SPA dev Vite (port 5174 -- mirrors ``admin-web/vite.config.ts``).
     "http://localhost:5174",
     "http://127.0.0.1:5174",
 )
 
 
-# Legacy admin host (three-segment ``admin.kb.sxy.homes``). The cookie
-# scope was changed to ``.sxy.homes`` when we migrated the admin URL
-# to ``admin-kb.sxy.homes``; browsers will no longer carry the old
-# cookie, so any incoming CORS / cookie-attach from this origin is
-# either stale config or an active exploit attempt. We block it
-# explicitly and log so deploy drift is obvious in the access log.
-LEGACY_ADMIN_ORIGIN = "https://admin.kb.sxy.homes"
+# Legacy admin hosts we migrated off. Both were intermediate names
+# during the rename sequence:
+#   admin.kb.sxy.homes (three-segment) -> admin-kb.sxy.homes -> admin.sxy.homes
+# Browsers will no longer carry the cross-subdomain cookie for these
+# (we deleted them from the production DNS), so any incoming CORS /
+# cookie-attach from them is either stale config or an active exploit
+# attempt. The CSRF middleware rejects with 403 and logs so deploy
+# drift is obvious in the access log.
+LEGACY_ADMIN_ORIGINS = frozenset(
+    {
+        "https://admin.kb.sxy.homes",
+        "https://admin-kb.sxy.homes",
+    }
+)
 
 
 def add_cors(app: Any) -> None:

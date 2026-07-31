@@ -63,7 +63,7 @@ def _set_session_cookie(response: Response, token: str, request: Request) -> Non
     can flip ``secure=False`` without code changes. When the cookie
     is marked ``Secure`` (i.e. production HTTPS), we set
     ``Domain=.sxy.homes`` so a single login works on every
-    ``*.sxy.homes`` subdomain (kb, admin-kb, future additions). In
+    ``*.sxy.homes`` subdomain (kb, admin, future additions). In
     dev (``Secure=False``) no domain is set, so the cookie sticks to
     ``localhost`` only.
     """

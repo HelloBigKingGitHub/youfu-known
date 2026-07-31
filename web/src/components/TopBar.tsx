@@ -128,7 +128,7 @@ export function TopBar({
               <MenuItem
                 icon={<ExternalLinkIcon />}
                 onClick={() =>
-                  window.open('https://admin-kb.sxy.homes', '_blank')
+                  window.open('https://admin.sxy.homes', '_blank')
                 }
               >
                 进入管理后台
