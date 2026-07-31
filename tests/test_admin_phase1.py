@@ -212,7 +212,7 @@ def test_admin_cors_and_secure_cookie_flags(client: TestClient) -> None:
     assert "samesite=none" in set_cookie
     assert "secure" in set_cookie
     # Cookie is scoped to ``.sxy.homes`` so a single login works on
-    # every ``*.sxy.homes`` subdomain (kb, admin, future ones).
+    # every ``*.sxy.homes`` subdomain (kb, admin-kb, future ones).
     assert "domain=.sxy.homes" in set_cookie
 
 
