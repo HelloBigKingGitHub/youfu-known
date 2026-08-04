@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from app.auth.models import UserRole
 from app.auth.security import hash_password
 from app.auth.storage import UserStore
+from app.feature_flags import Feature
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +61,35 @@ def rbac_users(client: TestClient) -> Iterator[Dict[str, Dict[str, str]]]:
         is_active=True,
         is_approved=True,
     )
+
+    # Phase Feature Flags regression guard: members are created with
+    # ``is_approved=True`` directly via the storage layer (no HTTP
+    # PATCH approve path), so their feature overrides default to
+    # False. Without enabling them below, every subsequent POST
+    # /api/kbs / chat / upload returns 403 "feature disabled".
+    #
+    # The legacy baseline (pre-Phase Feature Flags) ships the test
+    # suite expecting members to actually be able to create KBs,
+    # chat, and upload files -- so we just grant the basic
+    # member features here. Anything beyond these defaults is the
+    # admin's call to make in the real product.
+    # ``get_feature_flag_service`` is a FastAPI dependency expecting a
+    # ``Request``; bypass it by building a service against the same
+    # SQLite file the lifespan handler uses.
+    from app.feature_flags import FeatureFlagService as _FeatureFlagService
+
+    feature_service = _FeatureFlagService(client.app.state.settings.meta_db_abs())
+    for member in (alice, bob):
+        for feature in (
+            Feature.KB_CHAT,
+            Feature.KB_CREATE,
+            Feature.DOC_UPLOAD,
+            Feature.CHAT_HISTORY,
+        ):
+            feature_service.set_flag(
+                member.id, feature, True, granted_by=admin.id
+            )
+
     yield {
         "admin": {"id": admin.id, "username": "root", "password": "rootpw"},
         "alice": {"id": alice.id, "username": "alice", "password": "alicepw12"},

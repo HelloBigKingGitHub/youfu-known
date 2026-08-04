@@ -292,3 +292,175 @@ def test_csrf_allows_missing_origin(client: TestClient) -> None:
     """
     response = client.get("/api/admin/dashboard")
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Phase Feature Flags auto-approval contract (Phase 2.0)
+# ---------------------------------------------------------------------------
+
+
+def _read_flag_dict(user_id: str, settings) -> dict:
+    """Read the persisted feature_flags rows for ``user_id`` as a
+    ``{feature_name: enabled}`` mapping.
+
+    Helper for the auto-approve / auto-disable tests below. The
+    FeatureFlagService has no list-by-user shortcut that returns a
+    plain dict, so we read it directly from the SQLite file the
+    lifespan already opened.
+    """
+    import sqlite3
+
+    from app.feature_flags import FeatureFlagService
+
+    service = FeatureFlagService(settings.meta_db_abs())
+    flags = {f.feature: bool(f.enabled) for f in service.list_user_flags(user_id)}
+    service._conn.close()
+    return flags
+
+
+def test_admin_patch_approve_enables_member_features(client: TestClient) -> None:
+    """PATCH ``is_approved=True`` on a fresh member enables KB_CHAT /
+    KB_CREATE / DOC_UPLOAD / CHAT_HISTORY but leaves DOC_DELETE off.
+    """
+    from app.auth.storage import UserStore
+    from app.auth.security import hash_password
+
+    settings = client.app.state.settings  # type: ignore[attr-defined]
+    store: UserStore = client.app.state.user_store  # type: ignore[attr-defined]
+    member = store.create_user(
+        "auto_approve_member",
+        hash_password("test-pw", rounds=4),
+        role=UserRole.MEMBER,
+        is_approved=False,
+    )
+
+    # Bootstrap admin must be logged in for the PATCH to reach the body.
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "root", "password": "rootpw"},
+    )
+    assert login.status_code == 200, login.text
+
+    # Baseline: no persisted overrides.
+    pre = _read_flag_dict(member.id, settings)
+    assert pre == {}
+
+    resp = client.patch(
+        f"/api/admin/users/{member.id}",
+        json={"is_approved": True},
+    )
+    assert resp.status_code == 200, resp.text
+
+    after = _read_flag_dict(member.id, settings)
+    assert after == {
+        "kb_chat": True,
+        "kb_create": True,
+        "doc_upload": True,
+        "doc_delete": False,
+        "chat_history": True,
+    }
+
+
+def test_admin_patch_unapprove_disables_all_features(client: TestClient) -> None:
+    """PATCH ``is_approved=False`` flips every feature to False.
+
+    The user starts as approved with all member features on; after
+    the un-approve PATCH the feature_flags table shows every
+    feature off.
+    """
+    from app.auth.storage import UserStore
+    from app.auth.security import hash_password
+
+    settings = client.app.state.settings  # type: ignore[attr-defined]
+    store: UserStore = client.app.state.user_store  # type: ignore[attr-defined]
+    member = store.create_user(
+        "auto_disable_member",
+        hash_password("test-pw", rounds=4),
+        role=UserRole.MEMBER,
+        is_approved=True,
+    )
+
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "root", "password": "rootpw"},
+    )
+    assert login.status_code == 200, login.text
+
+    resp = client.patch(
+        f"/api/admin/users/{member.id}",
+        json={"is_approved": False},
+    )
+    assert resp.status_code == 200, resp.text
+
+    after = _read_flag_dict(member.id, settings)
+    assert after == {
+        "kb_chat": False,
+        "kb_create": False,
+        "doc_upload": False,
+        "doc_delete": False,
+        "chat_history": False,
+    }
+
+
+def test_admin_patch_promote_to_admin_enables_all_features(client: TestClient) -> None:
+    """PATCH ``role='admin'`` enables every feature (admin defaults).
+
+    The target starts as a regular member with no overrides; after
+    the PATCH all 5 features must be True.
+    """
+    from app.auth.storage import UserStore
+    from app.auth.security import hash_password
+
+    settings = client.app.state.settings  # type: ignore[attr-defined]
+    store: UserStore = client.app.state.user_store  # type: ignore[attr-defined]
+    target = store.create_user(
+        "promote_to_admin",
+        hash_password("test-pw", rounds=4),
+        role=UserRole.MEMBER,
+        is_approved=True,
+    )
+
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "root", "password": "rootpw"},
+    )
+    assert login.status_code == 200, login.text
+
+    resp = client.patch(
+        f"/api/admin/users/{target.id}",
+        json={"role": "admin"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["role"] == "admin"
+
+    after = _read_flag_dict(target.id, settings)
+    assert after == {
+        "kb_chat": True,
+        "kb_create": True,
+        "doc_upload": True,
+        "doc_delete": True,
+        "chat_history": True,
+    }
+
+
+def test_admin_cannot_unapprove_self(client: TestClient) -> None:
+    """An admin un-approving themselves gets HTTP 400 (INC-005).
+
+    Without this guard the admin would lose their own features
+    mid-session and lock themselves out of the admin panel.
+    """
+    login = client.post(
+        "/api/auth/login",
+        json={"username": "root", "password": "rootpw"},
+    )
+    assert login.status_code == 200, login.text
+    me = client.get("/api/auth/me").json()["data"]
+    admin_id = me["id"]
+
+    resp = client.patch(
+        f"/api/admin/users/{admin_id}",
+        json={"is_approved": False},
+    )
+    assert resp.status_code == 400, resp.text
+    body = resp.json()
+    assert "your own" in body["message"].lower() or "self" in body["message"].lower()

@@ -1,35 +1,42 @@
-"""Unit tests for ``app.api.admin`` (admin user-management endpoints).
+"""Unit + integration tests for the admin user-management endpoints.
 
-These tests focus on the HTTP layer of the admin router. They mock
-``AuthService`` so we can drive each endpoint deterministically without
-standing up a full SQLite + lifespan bootstrap (the ``P5b/V-rung``
-pattern referenced in the stage-3 spec: stub the service, exercise the
-endpoint, assert the envelope + status).
+Phase 1 of the admin router lived entirely under ``app.api.admin`` and
+exposed a single ``list_users`` / ``delete_user`` / ``update_user`` set
+of routes. Phase 2.0 split the surface area:
 
-Coverage:
+- ``GET    /api/admin/users``              -- moved to ``app.admin.users``
+- ``DELETE /api/admin/users/{user_id}``    -- moved to ``app.admin.users``
+- ``GET    /api/admin/users/{id}/stats``   -- new in ``app.admin.users``
+- ``PATCH  /api/admin/users/{user_id}``    -- stayed in ``app.api.admin``
+                                               (now also reconciles
+                                               ``feature_flags`` via
+                                               :func:`_apply_auto_features`)
 
-- ``GET    /api/admin/users`` -- empty list + populated list
-- ``PATCH  /api/admin/users/{user_id}`` -- approve, change role,
-  cannot demote self (400), not found (404)
-- ``DELETE /api/admin/users/{user_id}`` -- cascade contract
-- admin-only gate (``require_admin``) -- 403 for non-admin caller
+This file replaces the Phase-1 ``test_admin_api.py`` so the suite
+covers the *new* surface area:
 
-All 8 tests run against the per-test ``TestClient`` and never touch the
-filesystem or real ``AuthService`` / ``UserStore``.
+- ``GET /api/admin/users`` envelope shape  -- ``{total, items, limit,
+  offset}`` rather than a bare list.
+- ``DELETE /api/admin/users/{id}`` contract -- ``{deleted, existed}``
+  on the storage-backed router, not the legacy auth-service method.
+- ``PATCH /api/admin/users/{id}`` unchanged at the URL level, but
+  its body now drives the auto-feature sync so we stub the new
+  ``svc.list_users`` lookup too.
+- ``require_admin`` gate remains universal across both routers.
 
-Hard constraints (per stage-3 spec):
-
-- Zero edits to ``app/api/admin.py`` -- this file only exercises it.
-- Zero edits to ``app/auth/``, ``app/kb/service.py``, or backend runtime.
-- Zero new dependencies; uses FastAPI ``TestClient`` + ``unittest.mock``.
-- No commits -- the test file lives in ``tests/`` only.
+The list / delete tests run through the real ``TestClient`` lifespan
+because the new router pulls ``UserStore`` from ``app.state`` --
+mocking the whole storage layer would re-implement the spec. The
+PATCH tests keep the ``Mock(spec=AuthService)`` pattern from the
+Phase-1 baseline because that endpoint still talks to the auth
+service, not the storage layer.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, Iterator, List, Optional, Tuple
-from unittest.mock import MagicMock, Mock
+from typing import Any, Dict, Iterator, List, Tuple
+from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
@@ -37,11 +44,10 @@ from fastapi.testclient import TestClient
 
 from app.auth.deps import require_admin
 from app.auth.models import User, UserRole
-from app.auth.service import (
-    AuthService,
-    CannotDemoteSelfError,
-    UserNotFoundError,
-)
+from app.auth.security import hash_password
+from app.auth.service import AuthService, CannotDemoteSelfError, UserNotFoundError
+from app.auth.storage import UserStore
+from app.config import Settings
 
 
 # ---------------------------------------------------------------------------
@@ -62,11 +68,6 @@ def _make_user(
     is_approved: bool = True,
     email: str = "",
 ) -> User:
-    """Build a ``User`` instance for use in mock return values.
-
-    ``password_hash`` is intentionally omitted from the public model so
-    we don't need a real bcrypt hash to instantiate a fixture.
-    """
     return User(
         id=user_id,
         username=username,
@@ -92,7 +93,6 @@ def admin_user() -> User:
 
 @pytest.fixture
 def member_user() -> User:
-    """A single approved member (the typical target of admin ops)."""
     return _make_user(
         user_id="member-1",
         username="alice",
@@ -103,7 +103,6 @@ def member_user() -> User:
 
 @pytest.fixture
 def pending_user() -> User:
-    """An unapproved member (typical pre-approval target)."""
     return _make_user(
         user_id="pending-1",
         username="pending",
@@ -115,33 +114,27 @@ def pending_user() -> User:
 
 @pytest.fixture
 def mock_service() -> Mock:
-    """A ``Mock(spec=AuthService)`` with all admin methods stubbed.
-
-    The spec keeps callers honest: typos on method names raise
-    ``AttributeError`` instead of silently passing.
-    """
+    """``Mock(spec=AuthService)`` -- keeps callers honest on typos."""
     return Mock(spec=AuthService)
 
 
 @pytest.fixture
 def admin_client(
-    admin_user: User, mock_service: Mock, monkeypatch: pytest.MonkeyPatch
+    admin_user: User,
+    mock_service: Mock,
+    api_settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[Tuple[TestClient, Mock]]:
     """TestClient with ``require_admin`` bypassed as ``admin_user``.
 
-    Order matters: dependency overrides must be installed BEFORE the
-    TestClient's lifespan handler runs (so it sees them at request
-    time), but ``app.state.auth_service`` must be replaced AFTER the
-    lifespan runs (the lifespan populates it). We do both at the
-    right moment via the TestClient context manager.
-
-    ``monkeypatch.setenv("YOUFU_TURNSTILE_SECRET", "")`` puts the
-    Turnstile helper into dev-mode (skip real HTTPS round-trip), which
-    prevents cross-file pollution when this lifespan runs before
-    tests that exercise AuthService.register / login.
+    PATCH /api/admin/users/{id} still routes through
+    ``app.api.admin`` and consults ``app.state.auth_service``; we swap
+    that for ``mock_service`` so we can drive the endpoint without a
+    real SQLite-backed AuthService. The list / delete / stats endpoints
+    live under ``app.admin.users`` and use the real UserStore -- which
+    this fixture leaves untouched (with ``api_settings`` redirecting
+    every storage path at a per-test ``tmp_path``).
     """
-    # Force Turnstile into dev mode to avoid real Cloudflare calls
-    # that pollute the rest of the test suite with SSL errors.
     monkeypatch.setenv("YOUFU_TURNSTILE_SECRET", "")
 
     from main import create_app
@@ -151,12 +144,11 @@ def admin_client(
     def _mock_require_admin() -> User:
         return admin_user
 
-    # Install BEFORE the lifespan so the override is visible at request time.
     app.dependency_overrides[require_admin] = _mock_require_admin
 
     with TestClient(app, raise_server_exceptions=False) as client:
-        # The lifespan has now built the real ``auth_service`` on
-        # ``app.state`` -- swap it for our mock before any request runs.
+        # Replace the auth service AFTER lifespan so the rest of the
+        # admin router (storage, user_store, feature flags) stays real.
         app.state.auth_service = mock_service
         yield client, mock_service
 
@@ -165,14 +157,13 @@ def admin_client(
 
 @pytest.fixture
 def member_client(
-    admin_user: User, member_user: User, mock_service: Mock,
+    admin_user: User,
+    member_user: User,
+    mock_service: Mock,
+    api_settings: Settings,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[Tuple[TestClient, Mock]]:
-    """TestClient where ``require_admin`` rejects the caller with 403.
-
-    Used to exercise the RBAC gate independently of the real JWT flow.
-    """
-    # Same Turnstile dev-mode isolation as admin_client.
+    """TestClient where ``require_admin`` rejects the caller with 403."""
     monkeypatch.setenv("YOUFU_TURNSTILE_SECRET", "")
 
     from main import create_app
@@ -180,8 +171,6 @@ def member_client(
     app = create_app()
 
     def _mock_require_admin() -> User:
-        # Mirror ``app.auth.deps.require_admin``'s exact behaviour:
-        # non-admins get HTTP 403 with ``admin role required``.
         raise HTTPException(
             status_code=403, detail="admin role required"
         )
@@ -189,56 +178,100 @@ def member_client(
     app.dependency_overrides[require_admin] = _mock_require_admin
 
     with TestClient(app, raise_server_exceptions=False) as client:
-        # The service mock is never reached on this fixture -- the
-        # dependency raises first -- but assigning it keeps the contract
-        # identical to ``admin_client`` so the same teardown works.
         app.state.auth_service = mock_service
         yield client, mock_service
 
     app.dependency_overrides.clear()
 
 
+def _seed_users(store: UserStore) -> Dict[str, User]:
+    """Seed the UserStore with the canonical Phase-1 fixture trio.
+
+    The lifespan already bootstraps an admin (``root``); we look it up
+    instead of re-creating it so the UNIQUE constraint on ``username``
+    is honoured.
+    """
+    created: Dict[str, User] = {}
+    admin = store.list_users()
+    assert admin, "expected the lifespan to have seeded the root admin"
+    created["admin"] = admin[0]
+    created["alice"] = store.create_user(
+        "alice",
+        hash_password("alicepw", rounds=4),
+        role=UserRole.MEMBER,
+        is_approved=True,
+        email="alice@example.com",
+    )
+    created["bob"] = store.create_user(
+        "bob",
+        hash_password("bobpw", rounds=4),
+        role=UserRole.MEMBER,
+        is_approved=True,
+        email="user-bob@example.com",
+    )
+    created["pending"] = store.create_user(
+        "pending",
+        hash_password("pendingpw", rounds=4),
+        role=UserRole.MEMBER,
+        is_approved=False,
+    )
+    return created
+
+
 # ---------------------------------------------------------------------------
-# GET /api/admin/users
+# GET /api/admin/users  (new envelope shape)
 # ---------------------------------------------------------------------------
 
 
-def test_admin_list_users_empty(
-    admin_client: Tuple[TestClient, Mock],
-) -> None:
-    """Admin with no users in the system sees an empty list."""
-    client, svc = admin_client
-    svc.list_users.return_value = []
+def test_admin_list_users_empty(admin_client: Tuple[TestClient, Mock]) -> None:
+    """Admin envelope shape: total reflects the bootstrapped root user.
+
+    The lifespan seeds a single admin (``root``) so the "empty" case
+    is "no extra users beyond the bootstrap admin". The endpoint
+    must still return the documented envelope shape and respect
+    pagination defaults.
+    """
+    client, _svc = admin_client
+    store: UserStore = client.app.state.user_store  # type: ignore[attr-defined]
+    pre = store.list_users()
+    # Only the lifespan-seeded root admin is expected.
+    assert [u.username for u in pre] == ["root"]
 
     resp = client.get("/api/admin/users")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["code"] == 0
-    assert body["data"] == []
-    svc.list_users.assert_called_once_with()
+    payload = body["data"]
+    assert payload["total"] == 1
+    assert payload["limit"] == 50
+    assert payload["offset"] == 0
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["username"] == "root"
 
 
 def test_admin_list_users_returns_all(
     admin_client: Tuple[TestClient, Mock],
-    admin_user: User,
-    member_user: User,
-    pending_user: User,
 ) -> None:
-    """Admin sees every user (admin + approved member + pending member)."""
-    client, svc = admin_client
-    svc.list_users.return_value = [admin_user, member_user, pending_user]
+    """Admin sees every user through the new envelope."""
+    client, _svc = admin_client
+    store: UserStore = client.app.state.user_store  # type: ignore[attr-defined]
+    seeded = _seed_users(store)
 
     resp = client.get("/api/admin/users")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["code"] == 0
-    payload: List[Dict[str, Any]] = body["data"]
-    assert len(payload) == 3
-    usernames = {u["username"] for u in payload}
-    assert usernames == {"root", "alice", "pending"}
+    payload = body["data"]
+    # total reflects all seeded rows.
+    assert payload["total"] == len(seeded)
+    assert payload["limit"] == 50
+    assert payload["offset"] == 0
+    assert len(payload["items"]) == len(seeded)
+    usernames = {u["username"] for u in payload["items"]}
+    assert usernames == {"root", "alice", "bob", "pending"}
 
     # Each entry exposes the documented shape.
-    for entry in payload:
+    for entry in payload["items"]:
         assert set(entry.keys()) == {
             "id",
             "username",
@@ -249,14 +282,11 @@ def test_admin_list_users_returns_all(
             "created_at",
             "last_login_at",
         }
-        # Role comes back as the raw string, not the enum object.
         assert entry["role"] in {"admin", "member"}
-
-    svc.list_users.assert_called_once_with()
 
 
 # ---------------------------------------------------------------------------
-# PATCH /api/admin/users/{user_id}
+# PATCH /api/admin/users/{user_id}  (stays in app/api/admin.py)
 # ---------------------------------------------------------------------------
 
 
@@ -264,9 +294,16 @@ def test_admin_update_user_approve(
     admin_client: Tuple[TestClient, Mock],
     pending_user: User,
 ) -> None:
-    """PATCH ``is_approved=True`` flips the pending member to approved."""
+    """PATCH ``is_approved=True`` flips the pending member to approved.
+
+    PATCH still lives in ``app.api.admin``; we mock the auth service
+    but the new lookup-of-pre-state line calls ``svc.list_users()``,
+    so we have to stub that too.
+    """
     client, svc = admin_client
     approved = pending_user.model_copy(update={"is_approved": True})
+    # Pre-mutation lookup must yield the pending user.
+    svc.list_users.return_value = [pending_user]
     svc.update_user.return_value = approved
 
     resp = client.patch(
@@ -279,8 +316,7 @@ def test_admin_update_user_approve(
     assert body["data"]["id"] == pending_user.id
     assert body["data"]["is_approved"] is True
 
-    # Service was called with the admin's id as ``acting_user_id`` and
-    # only the patched field propagated.
+    svc.list_users.assert_called_once_with()
     svc.update_user.assert_called_once()
     kwargs = svc.update_user.call_args.kwargs
     assert kwargs["acting_user_id"] == "admin-1"
@@ -298,6 +334,7 @@ def test_admin_update_user_change_role(
     """PATCH ``role='member'`` round-trips the new role back to the admin."""
     client, svc = admin_client
     promoted = member_user.model_copy(update={"role": UserRole.MEMBER})
+    svc.list_users.return_value = [member_user]
     svc.update_user.return_value = promoted
 
     resp = client.patch(
@@ -322,6 +359,9 @@ def test_admin_update_user_cannot_demote_self(
 ) -> None:
     """An admin demoting themselves gets HTTP 400 with a clear message."""
     client, svc = admin_client
+    # ``update_user`` raises CannotDemoteSelfError on self-demotion; the
+    # pre-lookup must find the admin so we get past the 404 guard.
+    svc.list_users.return_value = [admin_user]
     svc.update_user.side_effect = CannotDemoteSelfError(
         "cannot remove your own admin role"
     )
@@ -332,12 +372,9 @@ def test_admin_update_user_cannot_demote_self(
     )
     assert resp.status_code == 400, resp.text
     body = resp.json()
-    # The HTTPException handler in main.py wraps ``detail`` into
-    # ``message``; the original text must be preserved.
     assert "cannot" in body["message"].lower()
     assert "admin" in body["message"].lower()
 
-    # Service was attempted with the admin's own id (acting == target).
     svc.update_user.assert_called_once()
     kwargs = svc.update_user.call_args.kwargs
     assert kwargs["acting_user_id"] == "admin-1"
@@ -350,6 +387,9 @@ def test_admin_update_user_not_found_404(
 ) -> None:
     """Patching a non-existent user surfaces HTTP 404."""
     client, svc = admin_client
+    # Pre-lookup is empty -> the endpoint raises 404 BEFORE hitting
+    # ``svc.update_user``.
+    svc.list_users.return_value = []
     svc.update_user.side_effect = UserNotFoundError(
         "user not found: nonexistent"
     )
@@ -362,18 +402,13 @@ def test_admin_update_user_not_found_404(
     body = resp.json()
     assert "not found" in body["message"].lower()
 
-    svc.update_user.assert_called_once_with(
-        acting_user_id="admin-1",
-        target_user_id="nonexistent",
-        is_approved=True,
-        role=None,
-        is_active=None,
-        email=None,
-    )
+    svc.list_users.assert_called_once_with()
+    # update_user is never reached on the empty-pre-state branch.
+    svc.update_user.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# DELETE /api/admin/users/{user_id}
+# DELETE /api/admin/users/{user_id}  (moved to app/admin/users.py)
 # ---------------------------------------------------------------------------
 
 
@@ -381,20 +416,26 @@ def test_admin_delete_user_cascade(
     admin_client: Tuple[TestClient, Mock],
     member_user: User,
 ) -> None:
-    """DELETE returns ``{deleted, existed}``; ``existed=True`` on first call."""
-    client, svc = admin_client
-    svc.delete_user.return_value = True
+    """DELETE goes through the storage-backed router and returns
+    ``{deleted, existed}``.
 
-    resp = client.delete(f"/api/admin/users/{member_user.id}")
+    The legacy ``app.api.admin.delete_user`` is gone, so we exercise
+    the new ``app.admin.users.delete_user`` directly via TestClient +
+    the real ``UserStore`` (seeded with the canonical fixture trio).
+    """
+    client, _svc = admin_client
+    store: UserStore = client.app.state.user_store  # type: ignore[attr-defined]
+    seeded = _seed_users(store)
+    target_id = seeded["alice"].id
+
+    resp = client.delete(f"/api/admin/users/{target_id}")
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["code"] == 0
-    assert body["data"]["deleted"] == member_user.id
+    assert body["data"]["deleted"] == target_id
     assert body["data"]["existed"] is True
-
-    svc.delete_user.assert_called_once_with(
-        acting_user_id="admin-1", target_user_id=member_user.id
-    )
+    # User is actually gone from storage.
+    assert store.get_user(target_id) is None
 
 
 # ---------------------------------------------------------------------------
@@ -408,29 +449,30 @@ def test_admin_endpoints_require_admin_role_403(
 ) -> None:
     """A non-admin caller is rejected with HTTP 403 on every admin route.
 
-    The service mock is never reached -- ``require_admin`` short-circuits
-    before the body runs.
+    ``require_admin`` short-circuits before the body runs on every
+    router (the legacy ``app.api.admin`` and the new
+    ``app.admin.users``), so the service mock is never reached.
     """
     client, _svc = member_client
 
-    # GET /api/admin/users
+    # GET /api/admin/users -- new envelope endpoint under app.admin.users
     r = client.get("/api/admin/users")
     assert r.status_code == 403, r.text
     assert "admin role required" in r.json()["message"]
 
-    # PATCH /api/admin/users/{user_id}
+    # PATCH /api/admin/users/{user_id} -- legacy app.api.admin endpoint
     r = client.patch(
         "/api/admin/users/member-1", json={"is_approved": True}
     )
     assert r.status_code == 403, r.text
     assert "admin role required" in r.json()["message"]
 
-    # DELETE /api/admin/users/{user_id}
+    # DELETE /api/admin/users/{user_id} -- new endpoint under app.admin.users
     r = client.delete("/api/admin/users/member-1")
     assert r.status_code == 403, r.text
     assert "admin role required" in r.json()["message"]
 
-    # No service method was ever invoked.
+    # No auth-service method was ever invoked.
     _svc.list_users.assert_not_called()
     _svc.update_user.assert_not_called()
     _svc.delete_user.assert_not_called()
