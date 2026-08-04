@@ -263,6 +263,66 @@ class UserStore:
             ).fetchall()
             return [_row_to_user(r) for r in rows]
 
+    def search_users(
+        self,
+        *,
+        q: Optional[str] = None,
+        role: Optional[UserRole] = None,
+        is_approved: Optional[bool] = None,
+        is_active: Optional[bool] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[List[User], int]:
+        """Filter + paginate users, returning ``(items, total)``.
+
+        - ``q``: case-insensitive substring match against ``username``
+          *or* ``email``.
+        - ``role`` / ``is_approved`` / ``is_active``: exact match when
+          provided, otherwise ignored.
+        - ``limit`` / ``offset``: pagination. ``limit`` is clamped at
+          the caller to the documented maximum.
+        Ordering: newest first (``created_at DESC, rowid DESC``).
+        """
+        self.init()
+
+        conditions: list[str] = []
+        params: list = []
+        if q is not None and q.strip():
+            conditions.append(
+                "(LOWER(username) LIKE ? OR LOWER(COALESCE(email, '')) LIKE ?)"
+            )
+            needle = f"%{q.strip().lower()}%"
+            params.append(needle)
+            params.append(needle)
+        if role is not None:
+            conditions.append("role = ?")
+            params.append(role.value)
+        if is_approved is not None:
+            conditions.append("is_approved = ?")
+            params.append(1 if is_approved else 0)
+        if is_active is not None:
+            conditions.append("is_active = ?")
+            params.append(1 if is_active else 0)
+
+        where_clause = (
+            (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        )
+
+        with self._lock, self._connect() as conn:
+            total_row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM users{where_clause}",
+                tuple(params),
+            ).fetchone()
+            total = int(total_row["n"] if total_row else 0)
+
+            rows = conn.execute(
+                f"SELECT * FROM users{where_clause} "
+                "ORDER BY created_at DESC, rowid DESC "
+                "LIMIT ? OFFSET ?",
+                tuple(params + [int(limit), int(offset)]),
+            ).fetchall()
+            return [_row_to_user(r) for r in rows], total
+
     def update_user(
         self,
         user_id: str,

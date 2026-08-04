@@ -281,6 +281,31 @@ class AuthService:
     def list_users(self) -> list:
         return self._store.list_users()
 
+    def search_users(
+        self,
+        *,
+        q: Optional[str] = None,
+        role: Optional[UserRole] = None,
+        is_approved: Optional[bool] = None,
+        is_active: Optional[bool] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list, int]:
+        """Return ``(items, total)`` for the admin user browser.
+
+        Delegates to :meth:`UserStore.search_users`. ``limit`` /
+        ``offset`` are clamped at the HTTP layer; this method trusts
+        its caller.
+        """
+        return self._store.search_users(
+            q=q,
+            role=role,
+            is_approved=is_approved,
+            is_active=is_active,
+            limit=limit,
+            offset=offset,
+        )
+
     def update_user(
         self,
         acting_user_id: str,
