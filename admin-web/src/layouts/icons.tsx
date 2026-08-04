@@ -72,3 +72,15 @@ export const FiTrash2 = makeIcon(
     <line x1="14" y1="11" x2="14" y2="17" />
   </>,
 )
+
+export const FiChevronLeft = makeIcon(
+  <>
+    <polyline points="15 18 9 12 15 6" />
+  </>,
+)
+
+export const FiChevronRight = makeIcon(
+  <>
+    <polyline points="9 18 15 12 9 6" />
+  </>,
+)

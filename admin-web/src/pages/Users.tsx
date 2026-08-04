@@ -2,6 +2,7 @@ import {
   Alert,
   AlertIcon,
   Box,
+  Button,
   Flex,
   HStack,
   Heading,
@@ -9,6 +10,7 @@ import {
   Input,
   InputGroup,
   InputLeftElement,
+  Select,
   Spinner,
   Stack,
   Table,
@@ -22,8 +24,8 @@ import {
   useDisclosure,
   useToast,
 } from '@chakra-ui/react'
-import { useEffect, useMemo, useState } from 'react'
-import { FiTrash2 } from '../layouts/icons'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FiChevronLeft, FiChevronRight, FiTrash2 } from '../layouts/icons'
 
 // Inline search icon — mirrors the FiSearch pattern from layouts/icons
 // without modifying the shared icon module.
@@ -50,39 +52,89 @@ import type { AdminUser } from '../api'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { formatDateTime } from '../lib/format'
 
+type RoleFilter = '' | 'admin' | 'member'
+
+// Status filter values (matches the tags rendered in the table).
+// - all     : no filter
+// - approved: is_approved=true
+// - pending : is_approved=false
+// - active  : is_active=true
+// - inactive: is_active=false
+type StatusFilter = 'all' | 'approved' | 'pending' | 'active' | 'inactive'
+
+const PAGE_SIZE = 50
+
 export function UsersPage() {
   const [users, setUsers] = useState<AdminUser[] | null>(null)
+  const [total, setTotal] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
+  const [role, setRole] = useState<RoleFilter>('')
+  const [status, setStatus] = useState<StatusFilter>('all')
+  const [offset, setOffset] = useState(0)
   const [pending, setPending] = useState<AdminUser | null>(null)
   const [busy, setBusy] = useState(false)
   const dialog = useDisclosure()
   const toast = useToast()
 
-  const reload = async () => {
-    try {
-      const data = await api.listUsers()
-      setUsers(data)
-      setError(null)
-    } catch (err: unknown) {
-      setError(formatApiError(err))
+  // Debounce the search input so we don't spam the backend on every keystroke.
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      setSearch(searchInput.trim())
+      setOffset(0)
+    }, 300)
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current)
     }
-  }
+  }, [searchInput])
+
+  // Reset to first page whenever a filter changes.
+  useEffect(() => {
+    setOffset(0)
+  }, [role, status])
+
+  const load = useCallback(
+    async (nextOffset: number) => {
+      try {
+        const data = await api.listUsers({
+          q: search || undefined,
+          role: (role || undefined) as 'admin' | 'member' | undefined,
+          is_approved:
+            status === 'approved'
+              ? true
+              : status === 'pending'
+                ? false
+                : undefined,
+          is_active:
+            status === 'active'
+              ? true
+              : status === 'inactive'
+                ? false
+                : undefined,
+          limit: PAGE_SIZE,
+          offset: nextOffset,
+        })
+        setUsers(data.items)
+        setTotal(data.total)
+        setError(null)
+      } catch (err: unknown) {
+        setError(formatApiError(err))
+      }
+    },
+    [search, role, status],
+  )
 
   useEffect(() => {
-    void reload()
-  }, [])
+    void load(offset)
+  }, [load, offset])
 
-  const filtered = useMemo(() => {
-    if (!users) return []
-    if (!search.trim()) return users
-    const q = search.trim().toLowerCase()
-    return users.filter(
-      (u) =>
-        u.username.toLowerCase().includes(q) ||
-        (u.email || '').toLowerCase().includes(q),
-    )
-  }, [users, search])
+  const pageEnd = useMemo(
+    () => Math.min(offset + PAGE_SIZE, total),
+    [offset, total],
+  )
 
   const handleDelete = async () => {
     if (!pending) return
@@ -98,7 +150,7 @@ export function UsersPage() {
       })
       dialog.onClose()
       setPending(null)
-      await reload()
+      await load(offset)
     } catch (err: unknown) {
       toast({
         title: '删除失败',
@@ -129,6 +181,9 @@ export function UsersPage() {
     )
   }
 
+  const canPrev = offset > 0
+  const canNext = offset + PAGE_SIZE < total
+
   return (
     <Stack spacing={6}>
       <Box>
@@ -136,28 +191,66 @@ export function UsersPage() {
           用户管理
         </Heading>
         <Text mt={1} color="whiteAlpha.600" fontSize="sm">
-          查看所有注册用户并执行删除操作；角色与审批流调整留待 Phase 2。
+          搜索 / 筛选 / 分页查看所有用户；批准、封禁、角色变更在右侧用户详情操作。
         </Text>
       </Box>
-      <HStack justify="space-between">
+
+      <HStack spacing={4} flexWrap="wrap">
         <InputGroup maxW="320px">
           <InputLeftElement pointerEvents="none">
             <Icon as={FiSearchIcon} color="whiteAlpha.500" />
           </InputLeftElement>
           <Input
             placeholder="搜索用户名或邮箱"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
             bg="ink.800"
             borderColor="whiteAlpha.200"
             _hover={{ borderColor: 'copper.400' }}
             _focusVisible={{ borderColor: 'signal.300', boxShadow: 'none' }}
+            data-testid="users-search-input"
           />
         </InputGroup>
-        <Text color="whiteAlpha.500" fontSize="sm">
-          共 {filtered.length} / {users.length} 人
+
+        <Select
+          value={role}
+          onChange={(e) => setRole(e.target.value as RoleFilter)}
+          maxW="160px"
+          bg="ink.800"
+          borderColor="whiteAlpha.200"
+          _hover={{ borderColor: 'copper.400' }}
+          aria-label="按角色筛选"
+          data-testid="users-role-filter"
+        >
+          <option value="">全部角色</option>
+          <option value="admin">仅管理员</option>
+          <option value="member">仅成员</option>
+        </Select>
+
+        <Select
+          value={status}
+          onChange={(e) => setStatus(e.target.value as StatusFilter)}
+          maxW="180px"
+          bg="ink.800"
+          borderColor="whiteAlpha.200"
+          _hover={{ borderColor: 'copper.400' }}
+          aria-label="按状态筛选"
+          data-testid="users-status-filter"
+        >
+          <option value="all">全部状态</option>
+          <option value="approved">已批准</option>
+          <option value="pending">待批准</option>
+          <option value="active">活跃</option>
+          <option value="inactive">已禁用</option>
+        </Select>
+
+        <Text color="whiteAlpha.500" fontSize="sm" ml="auto">
+          {total === 0
+            ? '共 0 人'
+            : `共 ${total} 人 · 显示 ${offset + 1}-${pageEnd}`}
         </Text>
       </HStack>
+
       <Box
         bg="ink.900"
         borderWidth="1px"
@@ -178,16 +271,18 @@ export function UsersPage() {
             </Tr>
           </Thead>
           <Tbody>
-            {filtered.length === 0 ? (
+            {users.length === 0 ? (
               <Tr>
                 <Td colSpan={7}>
                   <Text textAlign="center" color="whiteAlpha.500" py={6}>
-                    {search ? '没有匹配的用户' : '暂无用户'}
+                    {search || role || status !== 'all'
+                      ? '没有匹配的用户'
+                      : '暂无用户'}
                   </Text>
                 </Td>
               </Tr>
             ) : (
-              filtered.map((u) => (
+              users.map((u) => (
                 <Tr key={u.id} _hover={{ bg: 'whiteAlpha.50' }}>
                   <Td>
                     <Text fontFamily="heading" color="copper.300">{u.username}</Text>
@@ -265,6 +360,32 @@ export function UsersPage() {
           </Tbody>
         </Table>
       </Box>
+
+      <HStack justify="flex-end" spacing={2}>
+        <Button
+          size="sm"
+          variant="outline"
+          colorScheme="copper"
+          isDisabled={!canPrev}
+          onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+          leftIcon={<Icon as={FiChevronLeft} boxSize={4} />}
+          data-testid="users-prev-page"
+        >
+          上一页
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          colorScheme="copper"
+          isDisabled={!canNext}
+          onClick={() => setOffset(offset + PAGE_SIZE)}
+          rightIcon={<Icon as={FiChevronRight} boxSize={4} />}
+          data-testid="users-next-page"
+        >
+          下一页
+        </Button>
+      </HStack>
+
       <ConfirmDialog
         isOpen={dialog.isOpen}
         onClose={dialog.onClose}

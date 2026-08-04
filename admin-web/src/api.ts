@@ -176,7 +176,57 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
-  listUsers: () => request<AdminUser[]>('/api/admin/users'),
+  listUsers: (params?: {
+    q?: string
+    role?: 'admin' | 'member' | ''
+    is_approved?: boolean
+    is_active?: boolean
+    limit?: number
+    offset?: number
+  }) => {
+    const search = new URLSearchParams()
+    if (params?.q) search.set('q', params.q)
+    if (params?.role) search.set('role', params.role)
+    if (typeof params?.is_approved === 'boolean') {
+      search.set('is_approved', params.is_approved ? 'true' : 'false')
+    }
+    if (typeof params?.is_active === 'boolean') {
+      search.set('is_active', params.is_active ? 'true' : 'false')
+    }
+    if (typeof params?.limit === 'number') {
+      search.set('limit', String(params.limit))
+    }
+    if (typeof params?.offset === 'number') {
+      search.set('offset', String(params.offset))
+    }
+    const qs = search.toString()
+    return request<{
+      total: number
+      items: AdminUser[]
+      limit: number
+      offset: number
+    }>(`/api/admin/users${qs ? `?${qs}` : ''}`)
+  },
+  getUserStats: (userId: string) =>
+    request<{
+      user_id: string
+      kb_count: number
+      doc_count: number
+      chat_count: number
+    }>(`/api/admin/users/${encodeURIComponent(userId)}/stats`),
+  updateUser: (
+    userId: string,
+    body: {
+      is_approved?: boolean
+      role?: 'admin' | 'member'
+      is_active?: boolean
+      email?: string
+    },
+  ) =>
+    request<AdminUser>(
+      `/api/admin/users/${encodeURIComponent(userId)}`,
+      { method: 'PATCH', body: JSON.stringify(body) },
+    ),
   deleteUser: (userId: string) =>
     request<{ deleted: string; existed: boolean }>(
       `/api/admin/users/${encodeURIComponent(userId)}`,

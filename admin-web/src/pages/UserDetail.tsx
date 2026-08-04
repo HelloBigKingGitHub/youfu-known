@@ -3,21 +3,26 @@ import {
   AlertIcon,
   Box,
   Button,
+  ButtonGroup,
   Card,
   CardBody,
   CardHeader,
   Flex,
   HStack,
   Heading,
+  SimpleGrid,
   Spinner,
   Stack,
+  Stat,
+  StatLabel,
+  StatNumber,
   Switch,
   Tag,
   Text,
   useDisclosure,
   useToast,
 } from '@chakra-ui/react'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link as RouterLink, useParams } from 'react-router-dom'
 import { api, formatApiError } from '../api'
 import type { AdminUser, FeatureFlag } from '../api'
@@ -64,33 +69,69 @@ const FEATURE_DEFS: readonly FeatureDef[] = [
   },
 ]
 
+interface UserStats {
+  user_id: string
+  kb_count: number
+  doc_count: number
+  chat_count: number
+}
+
 export function UserDetail() {
   const { id } = useParams<{ id: string }>()
   const [user, setUser] = useState<AdminUser | null>(null)
   const [flags, setFlags] = useState<FeatureFlag[]>([])
+  const [stats, setStats] = useState<UserStats | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendingToggle, setPendingToggle] =
     useState<{ feature: string; enabled: boolean } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [approving, setApproving] = useState(false)
+  const [rejecting, setRejecting] = useState(false)
+  const [me, setMe] = useState<AdminUser | null>(null)
   const { isOpen, onOpen, onClose } = useDisclosure()
+  const rejectDialog = useDisclosure()
   const toast = useToast()
 
+  // The current admin (so we can disable the self-reject button per
+  // the Phase 2.0 spec — an admin must not be able to revoke their own
+  // approval and lose access to the panel).
   useEffect(() => {
-    if (!id) return
+    let cancelled = false
     void (async () => {
       try {
-        const [users, list] = await Promise.all([
-          api.listUsers(),
-          api.listUserFeatures(id),
-        ])
-        setUser(users.find((u) => u.id === id) ?? null)
-        setFlags(list)
-        setError(null)
-      } catch (err: unknown) {
-        setError(formatApiError(err))
+        const m = await api.me()
+        if (!cancelled) setMe(m)
+      } catch {
+        // Non-fatal: the only thing that depends on `me` is the
+        // self-reject guard.
       }
     })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const reload = useCallback(async () => {
+    if (!id) return
+    try {
+      const list = await api.listUsers({ limit: 200 })
+      const found = list.items.find((u) => u.id === id) ?? null
+      setUser(found)
+      const [featureList, userStats] = await Promise.all([
+        api.listUserFeatures(id),
+        api.getUserStats(id).catch(() => null),
+      ])
+      setFlags(featureList)
+      setStats(userStats)
+      setError(null)
+    } catch (err: unknown) {
+      setError(formatApiError(err))
+    }
   }, [id])
+
+  useEffect(() => {
+    void reload()
+  }, [reload])
 
   const flagFor = (feature: string): boolean | undefined =>
     flags.find((f) => f.feature === feature)?.enabled
@@ -139,6 +180,74 @@ export function UserDetail() {
     setPendingToggle(null)
   }
 
+  const handleApprove = async () => {
+    if (!id) return
+    setApproving(true)
+    try {
+      const updated = await api.updateUser(id, { is_approved: true })
+      setUser(updated)
+      // Feature flags reconcile server-side; refresh the local list so
+      // the toggle cards reflect the new effective state.
+      const refreshed = await api.listUserFeatures(id)
+      setFlags(refreshed)
+      toast({
+        title: '已批准',
+        description: `用户 ${updated.username} 已批准`,
+        status: 'success',
+        duration: 3000,
+        isClosable: true,
+      })
+    } catch (err: unknown) {
+      toast({
+        title: '批准失败',
+        description: formatApiError(err),
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      })
+    } finally {
+      setApproving(false)
+    }
+  }
+
+  const openReject = () => {
+    rejectDialog.onOpen()
+  }
+
+  const handleRejectConfirm = async () => {
+    if (!id) return
+    setRejecting(true)
+    try {
+      const updated = await api.updateUser(id, { is_approved: false })
+      setUser(updated)
+      const refreshed = await api.listUserFeatures(id)
+      setFlags(refreshed)
+      toast({
+        title: '已撤销批准',
+        description: `用户 ${updated.username} 已撤销批准`,
+        status: 'info',
+        duration: 3000,
+        isClosable: true,
+      })
+      rejectDialog.onClose()
+    } catch (err: unknown) {
+      toast({
+        title: '撤销失败',
+        description: formatApiError(err),
+        status: 'error',
+        duration: 5000,
+        isClosable: true,
+      })
+    } finally {
+      setRejecting(false)
+    }
+  }
+
+  const handleRejectDismiss = () => {
+    if (rejecting) return
+    rejectDialog.onClose()
+  }
+
   if (error) {
     return (
       <Alert status="error" variant="left-accent">
@@ -157,6 +266,8 @@ export function UserDetail() {
   }
 
   const isAdmin = user.role === 'admin'
+  const isSelf = me !== null && me.id === user.id
+  const canReject = !isSelf // admins cannot reject themselves
 
   const confirmBody = pendingToggle
     ? `确定要为用户「${user.username}」${
@@ -197,7 +308,8 @@ export function UserDetail() {
           )}
         </HStack>
         <Text color="whiteAlpha.600" fontSize="sm">
-          邮箱 {user.email || '—'} · 注册 {formatDateTime(user.created_at)}
+          邮箱 {user.email || '—'} · 注册 {formatDateTime(user.created_at)} ·{' '}
+          最近登录 {formatDateTime(user.last_login_at)}
         </Text>
       </Box>
 
@@ -212,6 +324,99 @@ export function UserDetail() {
           ← 返回用户列表
         </Button>
       </Box>
+
+      {/* Approval controls + stats cards */}
+      <SimpleGrid columns={{ base: 1, md: 4 }} spacing={4}>
+        <Stat
+          bg="ink.900"
+          borderColor="whiteAlpha.100"
+          borderWidth="1px"
+          borderRadius="lg"
+          px={5}
+          py={4}
+        >
+          <StatLabel color="whiteAlpha.600" fontSize="xs">
+            知识库
+          </StatLabel>
+          <StatNumber color="copper.300" fontFamily="heading">
+            {stats?.kb_count ?? '—'}
+          </StatNumber>
+        </Stat>
+        <Stat
+          bg="ink.900"
+          borderColor="whiteAlpha.100"
+          borderWidth="1px"
+          borderRadius="lg"
+          px={5}
+          py={4}
+        >
+          <StatLabel color="whiteAlpha.600" fontSize="xs">
+            文档
+          </StatLabel>
+          <StatNumber color="copper.300" fontFamily="heading">
+            {stats?.doc_count ?? '—'}
+          </StatNumber>
+        </Stat>
+        <Stat
+          bg="ink.900"
+          borderColor="whiteAlpha.100"
+          borderWidth="1px"
+          borderRadius="lg"
+          px={5}
+          py={4}
+        >
+          <StatLabel color="whiteAlpha.600" fontSize="xs">
+            问答记录
+          </StatLabel>
+          <StatNumber color="copper.300" fontFamily="heading">
+            {stats?.chat_count ?? '—'}
+          </StatNumber>
+        </Stat>
+        <Card
+          bg="ink.900"
+          borderColor="whiteAlpha.100"
+          borderWidth="1px"
+          data-testid="user-detail-approval-card"
+        >
+          <CardHeader pb={2}>
+            <Heading size="sm" color="whiteAlpha.900">
+              审批
+            </Heading>
+          </CardHeader>
+          <CardBody pt={0}>
+            <ButtonGroup size="sm" isAttached variant="outline">
+              <Button
+                colorScheme="green"
+                isLoading={approving}
+                isDisabled={approving || rejecting || user.is_approved}
+                onClick={handleApprove}
+                data-testid="user-detail-approve-btn"
+              >
+                {user.is_approved ? '已批准' : '批准'}
+              </Button>
+              <Button
+                colorScheme="red"
+                isLoading={rejecting}
+                isDisabled={!user.is_approved || rejecting || !canReject}
+                onClick={openReject}
+                title={
+                  canReject
+                    ? undefined
+                    : '不能撤销自己的批准，否则将失去后台访问权限'
+                }
+                data-testid="user-detail-reject-btn"
+              >
+                撤销批准
+              </Button>
+            </ButtonGroup>
+            {!canReject && (
+              <Text mt={2} fontSize="xs" color="whiteAlpha.500">
+                不能撤销自己的批准（避免失去后台访问权限）。
+              </Text>
+            )}
+          </CardBody>
+        </Card>
+      </SimpleGrid>
 
       <Stack spacing={4}>
         {FEATURE_DEFS.map((def) => {
@@ -285,6 +490,20 @@ export function UserDetail() {
         body={confirmBody}
         confirmLabel={pendingToggle?.enabled ? '启用' : '禁用'}
         isLoading={busy}
+      />
+
+      <ConfirmDialog
+        isOpen={rejectDialog.isOpen}
+        onClose={handleRejectDismiss}
+        onConfirm={handleRejectConfirm}
+        title="撤销批准"
+        body={
+          canReject
+            ? `撤销对「${user.username}」的批准？其所有功能开关将被关闭，需重新批准才能恢复。`
+            : '不能撤销自己的批准。'
+        }
+        confirmLabel="撤销"
+        isLoading={rejecting}
       />
     </Stack>
   )
