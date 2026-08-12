@@ -13,6 +13,8 @@ import type {
   User,
   LoginResponse,
 } from './types'
+import type { QuotaInfo } from './api/quota'
+export type { QuotaInfo, QuotaPeriod, QuotaUsageDay } from './api/quota'
 
 // Phase PDF-C.4 新加 — KB PDF 解析设置类型 (跟 web/src/lib/pdfSettings.ts 同步,
 // 后端 endpoint /api/kbs/{id}/settings 留给 Phase C.5, 当前 mock 走 API 层 fallback).
@@ -280,4 +282,8 @@ export const api = {
   clearChats: async (kbId: string) => {
     return request<void>(`/api/kbs/${kbId}/chats`, { method: 'DELETE' })
   },
+
+  // Phase 2.1: 用户额度
+  // GET /api/users/me/quota → 当前用户自己的额度 (auth required)
+  getMyQuota: () => request<QuotaInfo>('/api/users/me/quota'),
 }

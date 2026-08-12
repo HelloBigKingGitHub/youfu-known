@@ -1,6 +1,6 @@
-// 侧栏顶部用户菜单 - 显示用户名 + 登出/修改密码
+// 侧栏顶部用户菜单 - 显示用户名 + 我的额度/修改密码/登出
 import { Button, Menu, MenuButton, MenuDivider, MenuItem, MenuList, Text } from '@chakra-ui/react'
-import { ChevronDownIcon, LockIcon } from '@chakra-ui/icons'
+import { ChevronDownIcon, LockIcon, TimeIcon } from '@chakra-ui/icons'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import type { User } from '../types'
@@ -39,6 +39,9 @@ export function UserMenu({ user, onLogout }: UserMenuProps) {
         </Text>
       </MenuButton>
       <MenuList>
+        <MenuItem icon={<TimeIcon />} onClick={() => navigate('/account/quota')}>
+          我的额度
+        </MenuItem>
         <MenuItem icon={<LockIcon />} onClick={() => navigate('/change-password')}>
           修改密码
         </MenuItem>

@@ -32,6 +32,7 @@ import { LoginPage } from './components/LoginPage'
 import { RegisterPage } from './components/RegisterPage'
 import { RequireAuth } from './components/RequireAuth'
 import { TopBar } from './components/TopBar'
+import { AccountQuota } from './pages/AccountQuota'
 
 export function App() {
   const [user, setUser] = useState<User | null>(null)
@@ -187,6 +188,7 @@ function AuthenticatedApp({ user, onLogout }: AuthenticatedAppProps) {
               path="/change-password"
               element={<ChangePasswordPage />}
             />
+            <Route path="/account/quota" element={<AccountQuota />} />
             <Route path="*" element={<EmptyState />} />
           </Routes>
         </Box>
