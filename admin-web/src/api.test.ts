@@ -209,5 +209,57 @@ describe('admin api client', () => {
   it('formats unknown values via formatApiError', () => {
     expect(formatApiError('weird')).toBe('请求失败')
   })
+
+  it('fetches a user quota via GET', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      mockResponse({
+        tokens_total: 100000,
+        tokens_used: 20000,
+        tokens_remaining: 80000,
+        period: 'monthly',
+        reset_at: '2026-03-01T00:00:00',
+        usage_breakdown: [],
+      }),
+    )
+
+    await api.getUserQuota('u2')
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/admin/users/u2/quota',
+      expect.objectContaining({ credentials: 'include' }),
+    )
+  })
+
+  it('resets a user quota via POST', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(mockResponse({ reset: true }))
+
+    await api.resetUserQuota('u2')
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/admin/users/u2/quota/reset',
+      expect.objectContaining({ credentials: 'include', method: 'POST' }),
+    )
+  })
+
+  it('accepts quota_tokens_total / quota_period on updateUser', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(mockResponse({ id: 'u2' }))
+
+    await api.updateUser('u2', {
+      quota_tokens_total: 50000,
+      quota_period: 'weekly',
+    })
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/admin/users/u2',
+      expect.objectContaining({
+        credentials: 'include',
+        method: 'PATCH',
+        body: JSON.stringify({
+          quota_tokens_total: 50000,
+          quota_period: 'weekly',
+        }),
+      }),
+    )
+  })
 })
 

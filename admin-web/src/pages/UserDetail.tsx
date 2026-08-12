@@ -27,6 +27,7 @@ import { Link as RouterLink, useParams } from 'react-router-dom'
 import { api, formatApiError } from '../api'
 import type { AdminUser, FeatureFlag } from '../api'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { UserQuotaCard } from '../components/UserQuotaCard'
 import { formatDateTime } from '../lib/format'
 
 interface FeatureDef {
@@ -417,6 +418,8 @@ export function UserDetail() {
           </CardBody>
         </Card>
       </SimpleGrid>
+
+      <UserQuotaCard userId={user.id} username={user.username} />
 
       <Stack spacing={4}>
         {FEATURE_DEFS.map((def) => {

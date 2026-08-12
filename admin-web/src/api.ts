@@ -80,6 +80,28 @@ export interface FeatureFlag {
   created_at: string
 }
 
+export type QuotaPeriod = 'monthly' | 'weekly' | 'daily' | 'none'
+
+export interface QuotaUsageDay {
+  /** YYYY-MM-DD */
+  date: string
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  calls: number
+}
+
+export interface QuotaInfo {
+  tokens_total: number
+  tokens_used: number
+  /** null = 无上限 (tokens_total === 0 时) */
+  tokens_remaining: number | null
+  period: QuotaPeriod
+  /** ISO datetime 或 null (period=none 或无重置时间) */
+  reset_at: string | null
+  usage_breakdown: QuotaUsageDay[]
+}
+
 interface Envelope<T> {
   code: number
   data?: T
@@ -221,11 +243,22 @@ export const api = {
       role?: 'admin' | 'member'
       is_active?: boolean
       email?: string
+      quota_tokens_total?: number
+      quota_period?: QuotaPeriod
     },
   ) =>
     request<AdminUser>(
       `/api/admin/users/${encodeURIComponent(userId)}`,
       { method: 'PATCH', body: JSON.stringify(body) },
+    ),
+  getUserQuota: (userId: string) =>
+    request<QuotaInfo>(
+      `/api/admin/users/${encodeURIComponent(userId)}/quota`,
+    ),
+  resetUserQuota: (userId: string) =>
+    request<{ reset: true }>(
+      `/api/admin/users/${encodeURIComponent(userId)}/quota/reset`,
+      { method: 'POST' },
     ),
   deleteUser: (userId: string) =>
     request<{ deleted: string; existed: boolean }>(

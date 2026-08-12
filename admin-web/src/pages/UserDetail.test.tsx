@@ -18,6 +18,8 @@ const mockListUserFeatures = vi.fn()
 const mockUpdateUserFeature = vi.fn()
 const mockGetUserStats = vi.fn()
 const mockUpdateUser = vi.fn()
+const mockGetUserQuota = vi.fn()
+const mockResetUserQuota = vi.fn()
 const mockMe = vi.fn()
 
 vi.mock('../api', () => ({
@@ -28,6 +30,8 @@ vi.mock('../api', () => ({
     updateUserFeature: (...args: unknown[]) => mockUpdateUserFeature(...args),
     getUserStats: (...args: unknown[]) => mockGetUserStats(...args),
     updateUser: (...args: unknown[]) => mockUpdateUser(...args),
+    getUserQuota: (...args: unknown[]) => mockGetUserQuota(...args),
+    resetUserQuota: (...args: unknown[]) => mockResetUserQuota(...args),
   },
   formatApiError: (err: unknown) =>
     err instanceof Error ? err.message : String(err),
@@ -81,6 +85,8 @@ beforeEach(() => {
   mockUpdateUserFeature.mockReset()
   mockGetUserStats.mockReset()
   mockUpdateUser.mockReset()
+  mockGetUserQuota.mockReset()
+  mockResetUserQuota.mockReset()
   mockMe.mockReset()
 
   // Page defaults look up bob (member, u2). `me` defaults to alice so
@@ -110,6 +116,19 @@ beforeEach(() => {
       ...body,
     }
   })
+  // Default quota for bob: 100k total, 20k used, monthly.
+  mockGetUserQuota.mockResolvedValue({
+    tokens_total: 100000,
+    tokens_used: 20000,
+    tokens_remaining: 80000,
+    period: 'monthly',
+    reset_at: '2026-09-01T00:00:00',
+    usage_breakdown: [
+      { date: '2026-08-10', prompt_tokens: 5000, completion_tokens: 2000, total_tokens: 7000, calls: 3 },
+      { date: '2026-08-11', prompt_tokens: 8000, completion_tokens: 5000, total_tokens: 13000, calls: 5 },
+    ],
+  })
+  mockResetUserQuota.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -404,5 +423,88 @@ describe('UserDetail', () => {
     expect(
       screen.getAllByText('管理员自动启用，无法关闭').length,
     ).toBeGreaterThanOrEqual(5)
+  })
+
+  // ---------------------------------------------------------------------------
+  // Quota tab (Phase 2.1)
+  // ---------------------------------------------------------------------------
+
+  it('renders the quota tab with usage / total / remaining tokens', async () => {
+    renderUserDetail('u2')
+
+    await waitFor(() =>
+      expect(screen.getByText(/用户详情 · bob/)).toBeInTheDocument(),
+    )
+
+    // Wait for the quota fetch + render (data-testid 来自 UserQuotaCard)
+    await waitFor(() => {
+      expect(screen.getByTestId('quota-used-tokens')).toBeInTheDocument()
+    })
+
+    // 20000 → 20.0K, 100000 → 100K, 80000 → 80.0K
+    expect(screen.getByTestId('quota-used-tokens')).toHaveTextContent('20.0K')
+    expect(screen.getByTestId('quota-total-tokens')).toHaveTextContent('100K')
+    expect(screen.getByTestId('quota-remaining-tokens')).toHaveTextContent('80.0K')
+
+    // 进度条 + 30 天表格 2 行
+    expect(screen.getByTestId('quota-progress')).toBeInTheDocument()
+    const rows = screen.getAllByTestId('quota-usage-row')
+    expect(rows).toHaveLength(2)
+
+    // API 调用次数
+    expect(mockGetUserQuota).toHaveBeenCalledWith('u2')
+  })
+
+  it('saves the new total tokens via updateUser', async () => {
+    renderUserDetail('u2')
+
+    await waitFor(() =>
+      expect(screen.getByText(/用户详情 · bob/)).toBeInTheDocument(),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('quota-total-input')).toBeInTheDocument()
+    })
+
+    // 在 number input 输入 50000
+    const input = screen.getByTestId('quota-total-input') as HTMLInputElement
+    fireEvent.change(input, { target: { value: '50000' } })
+
+    // 点保存
+    fireEvent.click(screen.getByTestId('quota-save-button'))
+
+    // updateUser 应该被以 {quota_tokens_total: 50000} 调用
+    await waitFor(() =>
+      expect(mockUpdateUser).toHaveBeenCalledWith(
+        'u2',
+        expect.objectContaining({ quota_tokens_total: 50000 }),
+      ),
+    )
+  })
+
+  it('opens a confirm dialog before resetting the user quota', async () => {
+    renderUserDetail('u2')
+
+    await waitFor(() =>
+      expect(screen.getByText(/用户详情 · bob/)).toBeInTheDocument(),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByTestId('quota-reset-button')).toBeInTheDocument()
+    })
+
+    // 点重置
+    fireEvent.click(screen.getByTestId('quota-reset-button'))
+
+    // 确认对话框出现 (data-testid 在 confirm 按钮上)
+    await waitFor(() => {
+      expect(screen.getByTestId('quota-reset-confirm')).toBeInTheDocument()
+    })
+
+    // 确认
+    fireEvent.click(screen.getByTestId('quota-reset-confirm'))
+
+    // resetUserQuota 被调用
+    await waitFor(() => expect(mockResetUserQuota).toHaveBeenCalledWith('u2'))
   })
 })
