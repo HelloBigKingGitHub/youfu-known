@@ -325,12 +325,28 @@ class FakeEmbeddingClient:
 
 @dataclass
 class FakeChatClient:
-    """Deterministic chat client that echoes a canned reply."""
+    """Deterministic chat client that echoes a canned reply.
+
+    Mirrors the real ``MiniMaxChatClient`` return type -- callers
+    that record quota tokens read ``.prompt_tokens`` /
+    ``.completion_tokens`` off the returned object.
+    """
 
     reply: str = "这是来自 fake LLM 的固定回答 [1]."
+    prompt_tokens: int = 50
+    completion_tokens: int = 20
 
-    async def achat(self, messages, **kw) -> str:  # noqa: ARG002
-        return self.reply
+    async def achat(self, messages, **kw) -> "ChatResponse":  # noqa: ARG002
+        # Local import keeps the top of the file lean; ChatResponse is
+        # only referenced from this fixture.
+        from app.llm.base import ChatResponse
+
+        return ChatResponse(
+            content=self.reply,
+            prompt_tokens=self.prompt_tokens,
+            completion_tokens=self.completion_tokens,
+            total_tokens=self.prompt_tokens + self.completion_tokens,
+        )
 
     async def astream(self, messages, **kw):  # noqa: ARG002
         for ch in self.reply:

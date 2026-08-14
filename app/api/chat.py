@@ -22,6 +22,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api import ok
+from app.admin.quota import QuotaService
+from app.admin.quota_decorator import enforce_quota
 from app.auth.models import User, UserRole
 from app.deps import get_retriever, get_kb_service
 from app.feature_flag_decorator import require_feature
@@ -155,7 +157,9 @@ async def chat(
     kb_id: str,
     body: ChatRequest,
     request: Request,
-    user: User = Depends(require_feature(Feature.KB_CHAT)),
+    # enforce_quota runs after require_feature so we don't bill quota
+    # for users that were already rejected by a missing feature flag.
+    user: User = Depends(enforce_quota(Feature.KB_CHAT)),
     retriever: Retriever = Depends(get_retriever),
     kb_service: KBService = Depends(get_kb_service),
 ) -> dict:
@@ -213,6 +217,30 @@ async def chat(
         latency_ms=latency,
         user_id=user.id,
     )
+
+    # Record quota tokens for non-admin users. Admins bypass
+    # ``enforce_quota`` so we don't bill them; their token usage is
+    # still logged in ``user_token_usage`` for the audit view.
+    quota_service = getattr(request.app.state, "quota_service", None)
+    if (
+        quota_service is not None
+        and result.usage is not None
+        and result.usage.total_tokens > 0
+    ):
+        try:
+            quota_service.record_usage(
+                user_id=user.id,
+                endpoint=f"/api/kbs/{kb_id}/chat",
+                feature=Feature.KB_CHAT.value,
+                prompt_tokens=result.usage.prompt_tokens,
+                completion_tokens=result.usage.completion_tokens,
+            )
+        except Exception:  # noqa: BLE001
+            import logging
+
+            logging.getLogger(__name__).exception(
+                "Failed to record chat quota usage for user=%s", user.id
+            )
 
     response = ChatResponse(
         answer=result.answer,

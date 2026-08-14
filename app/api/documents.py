@@ -24,6 +24,8 @@ from fastapi import (
 )
 
 from app.api import ok
+from app.admin.quota import QuotaService
+from app.admin.quota_decorator import enforce_quota
 from app.auth.deps import get_current_user
 from app.auth.models import User, UserRole
 from app.deps import get_kb_service
@@ -142,7 +144,7 @@ async def upload_documents(
     kb_id: str,
     request: Request,
     files: List[UploadFile] = File(..., description="One or more files to upload"),
-    user: User = Depends(require_feature(Feature.DOC_UPLOAD)),
+    user: User = Depends(enforce_quota(Feature.DOC_UPLOAD)),
     svc: KBService = Depends(get_kb_service),
 ) -> dict:
     """Upload one or more files into a KB and kick off background ingest.
@@ -162,6 +164,7 @@ async def upload_documents(
     if not files:
         raise HTTPException(status_code=400, detail="no files provided")
 
+    quota_service = getattr(request.app.state, "quota_service", None)
     uploaded = []
     for file in files:
         filename = _safe_filename(file.filename or "upload.bin")
@@ -186,6 +189,29 @@ async def upload_documents(
             raise HTTPException(status_code=413, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        # Embedding token estimate: chars / 4 is the rough rule-of-thumb
+        # used across the rest of the codebase (chunker's ``token_estimate``).
+        # We don't have parsed texts at this point, so we use the raw
+        # byte length (assuming UTF-8) as a conservative stand-in.
+        try:
+            text = content.decode("utf-8", errors="ignore")
+            est_tokens = max(1, len(text) // 4)
+        except Exception:
+            est_tokens = max(1, len(content) // 4)
+        if quota_service is not None and not is_admin and est_tokens > 0:
+            try:
+                quota_service.record_usage(
+                    user_id=user.id,
+                    endpoint=f"/api/kbs/{kb_id}/documents",
+                    feature=Feature.DOC_UPLOAD.value,
+                    prompt_tokens=est_tokens,
+                    completion_tokens=0,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Failed to record upload quota for user=%s", user.id
+                )
 
         # Fire-and-forget ingest. ``kick_ingest`` captures ``app`` by
         # closure so the background task can pull ``kb_service`` off

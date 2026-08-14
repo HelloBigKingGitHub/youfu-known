@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from app.config import Settings
-from app.llm.base import ChatClient
+from app.llm.base import ChatClient, ChatResponse
 from app.rag.embedder import Embedder
 from app.rag.vectorstore import VectorStore
 
@@ -29,10 +29,16 @@ class Citation:
 
 @dataclass
 class RagResult:
-    """Result of a single RAG turn."""
+    """Result of a single RAG turn.
+
+    ``usage`` is optional and only populated by callers that want to
+    charge quota tokens (e.g. the chat endpoint). Older callers can
+    keep ignoring it.
+    """
 
     answer: str
     citations: List[Citation] = field(default_factory=list)
+    usage: Optional[ChatResponse] = None
 
 
 class Retriever:
@@ -73,9 +79,13 @@ class Retriever:
 
         citations = self._format_citations(raw_hits)
         context = self._build_context(citations)
-        answer = await self._call_llm(question=question, context=context)
+        response = await self._call_llm(question=question, context=context)
 
-        return RagResult(answer=answer, citations=citations)
+        return RagResult(
+            answer=response.content,
+            citations=citations,
+            usage=response,
+        )
 
     # ------------------------------------------------------------------
     # Internals
@@ -129,8 +139,13 @@ class Retriever:
             budget -= len(block) + 2  # account for trailing blank line
         return "\n\n".join(lines)
 
-    async def _call_llm(self, question: str, context: str) -> str:
-        """Send the system+user prompt to the chat client."""
+    async def _call_llm(self, question: str, context: str) -> ChatResponse:
+        """Send the system+user prompt to the chat client.
+
+        Returns the full :class:`ChatResponse` (text + usage) so the
+        caller can record quota tokens. The retriever's ``ask`` method
+        unwraps ``.content`` into ``RagResult.answer``.
+        """
         system_prompt = self._settings.rag.system_prompt
         if context:
             user_content = (

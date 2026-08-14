@@ -8,7 +8,29 @@ the same interfaces.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
+
+
+@dataclass
+class ChatResponse:
+    """Structured reply from a chat-completion client.
+
+    ``content`` carries the assistant text; ``prompt_tokens`` /
+    ``completion_tokens`` / ``total_tokens`` capture the provider's
+    usage counters. The token counts are *additive* per call -- the
+    quota service sums them to bump ``users.quota_tokens_used``.
+
+    Using a dataclass (instead of returning a bare ``str``) lets the
+    caller record usage without re-parsing the OpenAI response, and
+    keeps the ``.content`` attribute access back-compatible with the
+    old ``str`` return type for any caller that ignores the usage.
+    """
+
+    content: str
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
 
 class ChatClient(ABC):
@@ -19,8 +41,8 @@ class ChatClient(ABC):
         self,
         messages: Sequence[Mapping[str, str]],
         **kw: Any,
-    ) -> str:
-        """Return the assistant's textual reply.
+    ) -> ChatResponse:
+        """Return the assistant's reply + token usage.
 
         Parameters
         ----------

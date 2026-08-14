@@ -17,7 +17,7 @@ from typing import Any, Iterable, List, Mapping, Sequence
 from openai import AsyncOpenAI
 
 from app.config import Settings
-from app.llm.base import ChatClient
+from app.llm.base import ChatClient, ChatResponse
 
 logger = logging.getLogger(__name__)
 
@@ -89,11 +89,13 @@ class MiniMaxChatClient(ChatClient):
         self,
         messages: Sequence[Mapping[str, str]],
         **kw: Any,
-    ) -> str:
-        """Send ``messages`` to MiniMax and return the assistant text reply.
+    ) -> ChatResponse:
+        """Send ``messages`` to MiniMax and return the assistant reply.
 
-        按 round-robin 顺序尝试可用 key; 遇 429 / 401 / 5xx 等可恢复错误时
-        自动切下一个 key 重试, 直到全部失败。
+        Returns a :class:`ChatResponse` with both the textual reply and
+        the provider's token usage. 按 round-robin 顺序尝试可用 key; 遇
+        429 / 401 / 5xx 等可恢复错误时自动切下一个 key 重试, 直到全部
+        失败。
         """
         if not messages:
             raise ValueError("messages must be a non-empty sequence")
@@ -131,7 +133,7 @@ class MiniMaxChatClient(ChatClient):
             # 成功 -> 更新 cursor
             with self._lock:
                 self._cursor = idx
-            return self._extract_content(resp)
+            return self._extract_response(resp)
 
         # 所有 key 都失败
         msg = (
@@ -161,14 +163,45 @@ class MiniMaxChatClient(ChatClient):
         with self._lock:
             self._fail_ts[idx] = time.time()
 
-    def _extract_content(self, resp: Any) -> str:
+    def _extract_response(self, resp: Any) -> ChatResponse:
+        """Pull the text + usage out of an OpenAI-compatible response.
+
+        Falls back to zero usage if the provider didn't return a
+        ``usage`` block (some non-OpenAI implementations omit it).
+        """
         try:
             choice = resp.choices[0]
-            content = choice.message.content or ""
+            content = (choice.message.content or "").strip()
         except (AttributeError, IndexError, KeyError) as exc:
             logger.exception("Unexpected MiniMax response shape: %s", resp)
             raise RuntimeError(f"Malformed MiniMax chat response: {exc}") from exc
-        return content.strip()
+
+        prompt_tokens = 0
+        completion_tokens = 0
+        total_tokens = 0
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            try:
+                prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+                completion_tokens = int(
+                    getattr(usage, "completion_tokens", 0) or 0
+                )
+                total_tokens = int(getattr(usage, "total_tokens", 0) or 0)
+            except (TypeError, ValueError):
+                pass
+        if total_tokens == 0:
+            total_tokens = prompt_tokens + completion_tokens
+
+        return ChatResponse(
+            content=content,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
+
+    def _extract_content(self, resp: Any) -> str:
+        """Backward-compat shim: return just the text from a response."""
+        return self._extract_response(resp).content
 
     @classmethod
     def _collect_keys(cls, settings: Settings) -> List[str]:

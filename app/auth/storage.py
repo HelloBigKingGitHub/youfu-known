@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator, List, Optional
 
-from app.auth.models import User, UserRole
+from app.auth.models import QuotaPeriod, User, UserRole
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,11 @@ CREATE TABLE IF NOT EXISTS users (
     is_active       INTEGER DEFAULT 1,
     is_approved     INTEGER DEFAULT 0,
     created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_login_at   TIMESTAMP
+    last_login_at   TIMESTAMP,
+    quota_tokens_total      INTEGER DEFAULT 100000,
+    quota_tokens_used       INTEGER DEFAULT 0,
+    quota_period            TEXT    DEFAULT 'monthly',
+    quota_period_reset_at   TIMESTAMP
 );
 """
 
@@ -74,6 +78,11 @@ def _parse_dt(value, fallback: Optional[datetime] = None) -> datetime:
 
 
 def _row_to_user(row: sqlite3.Row) -> User:
+    period_raw = row["quota_period"] or "monthly"
+    try:
+        period = QuotaPeriod(period_raw)
+    except ValueError:
+        period = QuotaPeriod.MONTHLY
     return User(
         id=row["id"],
         username=row["username"],
@@ -83,6 +92,14 @@ def _row_to_user(row: sqlite3.Row) -> User:
         is_approved=bool(row["is_approved"]),
         created_at=_parse_dt(row["created_at"]),
         last_login_at=_parse_dt(row["last_login_at"]) if row["last_login_at"] else None,
+        quota_tokens_total=int(row["quota_tokens_total"] or 0),
+        quota_tokens_used=int(row["quota_tokens_used"] or 0),
+        quota_period=period,
+        quota_period_reset_at=(
+            _parse_dt(row["quota_period_reset_at"])
+            if row["quota_period_reset_at"]
+            else None
+        ),
     )
 
 
@@ -131,8 +148,30 @@ class UserStore:
             with self._connect() as conn:
                 conn.executescript(CREATE_USERS_SQL + CREATE_USER_INDEX_SQL)
                 self._ensure_owner_columns(conn)
+                self._ensure_quota_columns(conn)
                 conn.commit()
             self._initialized = True
+
+    def _ensure_quota_columns(self, conn: sqlite3.Connection) -> None:
+        """Add the four quota columns to ``users`` if missing.
+
+        Mirrors the ``_ensure_owner_columns`` pattern: idempotent ALTER
+        TABLE driven by ``PRAGMA table_info``. Safe to call on legacy
+        DBs that were created before Phase 2.1 quota landed.
+        """
+        existing = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(users)").fetchall()
+        }
+        additions = (
+            ("quota_tokens_total", "INTEGER DEFAULT 100000"),
+            ("quota_tokens_used", "INTEGER DEFAULT 0"),
+            ("quota_period", "TEXT DEFAULT 'monthly'"),
+            ("quota_period_reset_at", "TIMESTAMP"),
+        )
+        for name, decl in additions:
+            if name not in existing:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {name} {decl}")
 
     def _ensure_owner_columns(self, conn: sqlite3.Connection) -> None:
         """Add owner_id / is_shared / user_id columns to existing tables.
@@ -202,6 +241,10 @@ class UserStore:
         role: UserRole = UserRole.MEMBER,
         is_active: bool = True,
         is_approved: bool = False,
+        quota_tokens_total: int = 100_000,
+        quota_tokens_used: int = 0,
+        quota_period: QuotaPeriod = QuotaPeriod.MONTHLY,
+        quota_period_reset_at: Optional[datetime] = None,
     ) -> User:
         """Insert a new user; raises ``ValueError`` on duplicate username."""
         self.init()
@@ -210,7 +253,9 @@ class UserStore:
             try:
                 conn.execute(
                     "INSERT INTO users (id, username, email, password_hash, "
-                    "role, is_active, is_approved) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "role, is_active, is_approved, quota_tokens_total, "
+                    "quota_tokens_used, quota_period, quota_period_reset_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         user_id,
                         username,
@@ -219,6 +264,14 @@ class UserStore:
                         role.value,
                         1 if is_active else 0,
                         1 if is_approved else 0,
+                        int(quota_tokens_total),
+                        int(quota_tokens_used),
+                        quota_period.value,
+                        (
+                            quota_period_reset_at.isoformat()
+                            if isinstance(quota_period_reset_at, datetime)
+                            else quota_period_reset_at
+                        ),
                     ),
                 )
                 conn.commit()
@@ -332,6 +385,11 @@ class UserStore:
         role: Optional[UserRole] = None,
         is_active: Optional[bool] = None,
         email: Optional[str] = None,
+        quota_tokens_total: Optional[int] = None,
+        quota_tokens_used: Optional[int] = None,
+        quota_period: Optional[QuotaPeriod] = None,
+        quota_period_reset_at: Optional[datetime] = None,
+        reset_quota_clock: bool = False,
     ) -> Optional[User]:
         self.init()
         fields: list = []
@@ -351,6 +409,29 @@ class UserStore:
         if email is not None:
             fields.append("email = ?")
             params.append(email)
+        if quota_tokens_total is not None:
+            fields.append("quota_tokens_total = ?")
+            params.append(int(quota_tokens_total))
+        if quota_tokens_used is not None:
+            fields.append("quota_tokens_used = ?")
+            params.append(int(quota_tokens_used))
+        if quota_period is not None:
+            fields.append("quota_period = ?")
+            params.append(quota_period.value)
+        if quota_period_reset_at is not None:
+            fields.append("quota_period_reset_at = ?")
+            params.append(
+                quota_period_reset_at.isoformat()
+                if isinstance(quota_period_reset_at, datetime)
+                else quota_period_reset_at
+            )
+        if reset_quota_clock:
+            # Admin "reset" flow: zero out used and push reset_at to the
+            # next boundary for the current period. We let the caller
+            # pass ``quota_period_reset_at`` separately if they want a
+            # specific timestamp; otherwise the Pydantic helper does it.
+            fields.append("quota_tokens_used = ?")
+            params.append(0)
         if not fields:
             return self.get_user(user_id)
 

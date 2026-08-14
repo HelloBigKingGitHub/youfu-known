@@ -21,7 +21,7 @@ from typing import Optional
 
 from fastapi import Request
 
-from app.auth.models import User, UserRole
+from app.auth.models import QuotaPeriod, User, UserRole
 from app.auth.security import (
     create_access_token,
     create_refresh_token,
@@ -315,6 +315,8 @@ class AuthService:
         role: Optional[UserRole] = None,
         is_active: Optional[bool] = None,
         email: Optional[str] = None,
+        quota_tokens_total: Optional[int] = None,
+        quota_period: Optional[QuotaPeriod] = None,
     ) -> User:
         """Apply admin-driven mutations; refuses self-demotion."""
         target = self._store.get_user(target_user_id)
@@ -332,6 +334,8 @@ class AuthService:
             role=role,
             is_active=is_active,
             email=email,
+            quota_tokens_total=quota_tokens_total,
+            quota_period=quota_period,
         )
         if updated is None:
             raise UserNotFoundError(f"user not found: {target_user_id}")

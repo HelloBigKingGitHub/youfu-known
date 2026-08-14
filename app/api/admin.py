@@ -200,6 +200,8 @@ async def update_user(
             role=body.role,
             is_active=body.is_active,
             email=body.email,
+            quota_tokens_total=body.quota_tokens_total,
+            quota_period=body.quota_period,
         )
     except UserNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
