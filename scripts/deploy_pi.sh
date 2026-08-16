@@ -24,6 +24,7 @@
 #   PI_INSTALL_DIR=/opt/youfu-known
 #   PI_PORT_HTTP=8000
 #   SKIP_GIT_PUSH=1  (跳过 git 推送, 默认会自动 push main)
+#   SKIP_APT=1       (跳过 apt-get install, 默认会跑; Pi 系统包已装时跳过)
 
 set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -91,13 +92,30 @@ EXP
     fi
 }
 
-# 在 Pi 上 sudo 跑 (不需要密码通过 sudoers NOPASSWD; 否则 expect 输密码)
+# 在 Pi 上 sudo 跑
+# 顺序: root → 直接跑; sudo -n 成功 → 免密直接 sudo;
+#        否则清晰报错 (不再默默卡死) — 用户需自己设 NOPASSWD 或手动跑
 pi_sudo() {
     if [[ "${PI_USER}" == "root" ]]; then
         pi_run "$*"
-    else
-        pi_run "sudo $*"
+        return $?
     fi
+
+    # 1. sudo 免密 → 直接 sudo
+    if pi_run "sudo -n true" >/dev/null 2>&1; then
+        pi_run "sudo $*"
+        return $?
+    fi
+
+    # 2. sudo 需要密码 → 明确报错, 给两条修法
+    log_error "Pi 的 sudo 需要密码, deploy 脚本不会自动喂密码 (安全策略)"
+    log_error "修法二选一:"
+    log_error "  1. 在 Pi 上配 NOPASSWD (推荐一次性配置):"
+    log_error "       ssh ${PI_USER}@${PI_HOST} \"echo '${PI_USER} ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/${PI_USER}-nopasswd\""
+    log_error "  2. 跳过需要 sudo 的步骤 (apt-get + 重启), 用:"
+    log_error "       SKIP_APT=1 bash scripts/deploy_pi.sh ..."
+    log_error "     然后手动 ssh 进 Pi 跑: sudo systemctl restart youfu-known"
+    return 1
 }
 
 # -------- 1. 探测 --------
@@ -203,12 +221,26 @@ log_ok "代码已同步"
 # -------- 3. 装系统依赖 (若需要) --------
 log_step "3/5 Pi 上准备系统包"
 
-log_info "检查/装 python3-venv + build-essential + libatlas + libxml2"
-# Pi 上 OpenCV/chroma 用的基础库
-pi_sudo "apt-get update -qq && apt-get install -y -qq \
-    python3-venv python3-dev build-essential \
-    libatlas-base-dev libxml2-dev libxslt1-dev \
-    2>&1 | tail -5" 2>&1 | tail -5
+if [[ "${SKIP_APT:-0}" == "1" ]]; then
+    log_info "SKIP_APT=1, 跳过 apt-get (假设系统包已装)"
+else
+    log_info "检查/装 python3-venv + build-essential + libatlas + libxml2"
+    # Pi 上 OpenCV/chroma 用的基础库
+    # 先快速检测包是否都已装, 装过就跳过整个 apt 调用 (无需 sudo)
+    if pi_run "dpkg -l python3-venv python3-dev build-essential libatlas-base-dev libxml2-dev libxslt1-dev 2>&1 | grep -c '^ii'" \
+        | awk '/[0-9]/{ if ($1 >= 6) exit 0; else exit 1 }' ; then
+        log_info "系统包已全部安装, 跳过 apt-get"
+    else
+        if ! pi_sudo "apt-get update -qq && apt-get install -y -qq \
+            python3-venv python3-dev build-essential \
+            libatlas-base-dev libxml2-dev libxslt1-dev \
+            2>&1 | tail -5"; then
+            log_error "apt-get install 失败"
+            log_warn "如包已装但仍想跳过 apt 步骤, 重跑时加: SKIP_APT=1 bash scripts/deploy_pi.sh ..."
+            exit 1
+        fi
+    fi
+fi
 
 # -------- 4. Pi 上跑 install.sh --------
 log_step "4/5 Pi 上 install.sh"

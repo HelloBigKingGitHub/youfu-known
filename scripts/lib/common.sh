@@ -67,15 +67,29 @@ ensure_dirs() {
     LOCK_FILE="${YOUFU_LOG_DIR}/youfu-known.lock"
 }
 
-# -------- sudo 包装: 若当前已是 root, 直接执行; 否则加 sudo --------
+# -------- sudo 包装 --------
+# is_root: 当前是否 uid 0
 is_root() { [[ "$(id -u)" -eq 0 ]]; }
 
+# run: 若当前是 root 直接跑; 否则加 sudo
+# 若 sudo 不可用 (需密码), 报清晰错误退出 — 不会自动喂密码 (安全策略)
 run() {
     if is_root; then
         "$@"
-    else
-        sudo "$@"
+        return $?
     fi
+
+    # 先测 sudo -n (免密), 不行就报错
+    if ! sudo -n true >/dev/null 2>&1; then
+        log_error "需要 sudo 但当前不可用 (无密码 + 不可免密)"
+        log_error "修法二选一:"
+        log_error "  1. 在本机配 NOPASSWD (一次性):"
+        log_error "       echo '\${YOUFU_USER:-$(id -un)} ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/\${YOUFU_USER:-$(id -un)}-nopasswd"
+        log_error "  2. 跳过需要 sudo 的步骤, 手动跑 sudo 命令"
+        return 1
+    fi
+
+    sudo "$@"
 }
 
 # 用指定用户执行命令 (用于非 root 系统上的服务以非特权用户跑)
