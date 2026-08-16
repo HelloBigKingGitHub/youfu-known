@@ -29,7 +29,6 @@ from app.auth.security import (
     verify_password,
 )
 from app.auth.storage import UserStore
-from app.auth.turnstile import verify_turnstile
 from app.config import Settings
 
 logger = logging.getLogger(__name__)
@@ -145,18 +144,9 @@ class AuthService:
         username: str,
         password: str,
         email: str = "",
-        turnstile_token: str = "",
         request: Optional[Request] = None,
     ) -> User:
         """Create a ``member`` account in the unapproved state."""
-        remote_ip = request.client.host if request and request.client else None
-        if not await verify_turnstile(
-            turnstile_token,
-            remote_ip,
-            secret_env=self._settings.auth.turnstile_secret_env,
-        ):
-            raise ValueError("captcha verification failed")
-
         username = (username or "").strip()
         if not username:
             raise ValueError("username must be non-empty")

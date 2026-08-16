@@ -67,7 +67,7 @@ export function RegisterPage() {
     }
     setLoading(true)
     try {
-      await api.register(username.trim(), email, password, 'captcha-verified')
+      await api.register(username.trim(), email, password)
       toast({
         title: '注册成功, 等待管理员批准',
         status: 'success',

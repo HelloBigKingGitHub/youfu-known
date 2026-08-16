@@ -132,7 +132,6 @@ async def register(body: UserCreate, request: Request) -> dict:
             username=body.username,
             password=body.password,
             email=body.email,
-            turnstile_token=body.turnstile_token,
             request=request,
         )
     except UsernameTakenError as exc:

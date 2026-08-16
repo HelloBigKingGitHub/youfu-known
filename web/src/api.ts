@@ -107,19 +107,13 @@ export const api = {
 
   me: () => request<User>('/api/auth/me'),
 
-  register: (
-    username: string,
-    email: string,
-    password: string,
-    turnstileToken: string,
-  ) =>
+  register: (username: string, email: string, password: string) =>
     request<void>('/api/auth/register', {
       method: 'POST',
       body: JSON.stringify({
         username,
         email,
         password,
-        turnstile_token: turnstileToken,
       }),
     }),
 
