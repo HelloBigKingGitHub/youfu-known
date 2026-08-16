@@ -31,9 +31,13 @@ stop_systemd() {
     if systemctl list-unit-files "${YOUFU_SERVICE_NAME}.service" 2>/dev/null \
         | grep -q "${YOUFU_SERVICE_NAME}.service" \
         && systemctl is-active --quiet "${YOUFU_SERVICE_NAME}"; then
-        run systemctl stop "${YOUFU_SERVICE_NAME}"
-        log_ok "systemd 停止成功"
-        return 0
+        if run systemctl stop "${YOUFU_SERVICE_NAME}"; then
+            log_ok "systemd 停止成功"
+            return 0
+        fi
+        # sudo 不可用 (run 返回非零) → 返回 1 让外层 fallback 到 nohup
+        log_warn "systemctl stop 失败 (可能 sudo 不可用), 尝试 fallback 到 nohup kill"
+        return 1
     fi
     return 1
 }
@@ -41,8 +45,20 @@ stop_systemd() {
 # -------- nohup 停止 --------
 stop_nohup() {
     if ! is_running; then
-        log_info "nohup 进程未在运行"
+        log_info "nohup 进程未在运行 (PID 文件不存在)"
         rm -f "${PID_FILE}"
+        # Fallback: PID 文件丢了但 uvicorn 进程可能在跑 (systemd 拉起的孤儿)
+        local orphan
+        orphan="$(pgrep -f 'uvicorn main:app' 2>/dev/null | head -1)"
+        if [[ -n "${orphan}" ]]; then
+            log_info "发现孤儿 uvicorn 进程 pid=${orphan}, 直接 kill"
+            kill -TERM "${orphan}" 2>/dev/null || true
+            sleep 2
+            if kill -0 "${orphan}" 2>/dev/null; then
+                kill -KILL "${orphan}" 2>/dev/null || true
+            fi
+            log_ok "孤儿进程已终止"
+        fi
         return 0
     fi
 

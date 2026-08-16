@@ -43,15 +43,22 @@ start_systemd() {
         | grep -q "${YOUFU_SERVICE_NAME}.service"; then
         return 1
     fi
-    if ! systemctl is-active --quiet "${YOUFU_SERVICE_NAME}"; then
-        run systemctl start "${YOUFU_SERVICE_NAME}"
+    # 如果已经在跑,直接返回
+    if systemctl is-active --quiet "${YOUFU_SERVICE_NAME}"; then
+        log_ok "已在运行 (systemd)"
+        return 0
     fi
-    if run systemctl is-active --quiet "${YOUFU_SERVICE_NAME}"; then
+    # systemctl start 需要 sudo; sudo 失败时让外层 fallback 到 nohup
+    if ! run systemctl start "${YOUFU_SERVICE_NAME}"; then
+        log_warn "systemctl start 失败 (可能 sudo 不可用), 尝试 fallback 到 nohup"
+        return 1
+    fi
+    if systemctl is-active --quiet "${YOUFU_SERVICE_NAME}"; then
         log_ok "systemd 启动成功"
         return 0
     fi
-    log_error "systemd 启动失败, 查看: journalctl -u ${YOUFU_SERVICE_NAME} -n 50"
-    exit 1
+    log_warn "systemd 启动后未 active, fallback 到 nohup"
+    return 1
 }
 
 # -------- nohup 启动 --------
